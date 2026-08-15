@@ -18,6 +18,9 @@ uncommitted changes that would be overwritten — a toast pops up with git's own
 - List shows **at most 5 rows**; more branches scroll inside the list (no page-level scrolling).
 - **Current branch marked in a distinct color** (brand blue + check icon).
 - Branch switching with conflict detection: failures pop a transient toast carrying git's stderr.
+- **New branch action** at the bottom of the menu: a dialog asks for the branch name, then creates
+  the branch from HEAD and checks it out (`git switch -c`); invalid names are flagged live, and
+  collisions surface git's message inside the dialog.
 - Full **zh / en i18n** and automatic **multi-theme** support through `--dsw-*` design tokens.
 - Detached-HEAD safe (trigger falls back to `HEAD`); unborn-HEAD repos still list the current branch.
 
@@ -25,11 +28,13 @@ uncommitted changes that would be overwritten — a toast pops up with git's own
 
 Dual-half package, no harness source changes:
 
-- **Node half** (`src/index.ts`, `src/git.ts`) — registers two HTTP routes on `ctx.webServer`:
+- **Node half** (`src/index.ts`, `src/git.ts`) — registers three HTTP routes on `ctx.webServer`:
   - `GET /plugin/ui-git-branch/status?cwd=<workspace>` → git availability, repo membership,
     current branch, local branch list.
   - `POST /plugin/ui-git-branch/switch` `{ cwd, branch }` → `git switch -- <branch>`;
     non-zero exits return `409 { error: { code, message } }` with git's stderr.
+  - `POST /plugin/ui-git-branch/create` `{ cwd, branch }` → `git switch -c <branch>`
+    (create from HEAD and check out); an existing branch maps to `branch-exists`.
   - Git runs via `node:child_process` `execFile` (argv-only, no shell).
 - **Browser half** (`src/client/`) — registers a `conversation.input.right` entry
   (`order: 100`, namespace `gitBranch`); reads the session workspace from the standard

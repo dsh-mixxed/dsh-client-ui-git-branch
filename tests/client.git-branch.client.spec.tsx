@@ -10,7 +10,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { GitBranchSelect, fuzzyMatch, type GitBranchSelectProps } from '../src/client/GitBranchSelect.tsx'
+import { GitBranchSelect, fuzzyMatch, isValidBranchName, type GitBranchSelectProps } from '../src/client/GitBranchSelect.tsx'
 import { en, type GitBranchKey } from '../src/client/locales.ts'
 import type { StatusResponse } from '../src/wire.ts'
 import css from '../src/client/GitBranchSelect.module.css'
@@ -49,6 +49,7 @@ interface Overrides {
   status?: StatusResponse
   statusError?: Error
   switchError?: Error
+  createError?: Error
 }
 
 function makeProps(overrides: Overrides = {}) {
@@ -62,14 +63,20 @@ function makeProps(overrides: Overrides = {}) {
       ? Promise.reject(overrides.switchError)
       : Promise.resolve(),
   )
+  const createBranch = vi.fn((_cwd: string, _branch: string) =>
+    overrides.createError !== undefined
+      ? Promise.reject(overrides.createError)
+      : Promise.resolve(),
+  )
   const props = {
     sessionId: 's1',
     useSessions: (sel: (state: never) => unknown) => sel(sessionsState(overrides.cwd)),
     loadStatus,
     switchBranch,
+    createBranch,
     t: makeT(en),
   } as unknown as GitBranchSelectProps
-  return { props, loadStatus, switchBranch }
+  return { props, loadStatus, switchBranch, createBranch }
 }
 
 let container: HTMLElement
@@ -256,5 +263,128 @@ describe('menu', () => {
       containerEl.querySelector('button')?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
     })
     expect(containerEl.querySelector('[role="menu"]')).toBeNull()
+  })
+})
+
+describe('isValidBranchName', () => {
+  it('accepts ordinary and hierarchical names', () => {
+    expect(isValidBranchName('feature/new')).toBe(true)
+    expect(isValidBranchName('main')).toBe(true)
+    expect(isValidBranchName('  release/2.0  ')).toBe(true)
+  })
+
+  it('rejects empty, whitespace, and oversized names', () => {
+    expect(isValidBranchName('')).toBe(false)
+    expect(isValidBranchName('   ')).toBe(false)
+    expect(isValidBranchName('x'.repeat(256))).toBe(false)
+  })
+
+  it('rejects forbidden characters and component shapes', () => {
+    expect(isValidBranchName('bad name')).toBe(false)
+    expect(isValidBranchName('a~b')).toBe(false)
+    expect(isValidBranchName('a^b')).toBe(false)
+    expect(isValidBranchName('a:b')).toBe(false)
+    expect(isValidBranchName('a?b')).toBe(false)
+    expect(isValidBranchName('a*b')).toBe(false)
+    expect(isValidBranchName('a[b')).toBe(false)
+    expect(isValidBranchName('a\\b')).toBe(false)
+    expect(isValidBranchName('a..b')).toBe(false)
+    expect(isValidBranchName('a@{b')).toBe(false)
+    expect(isValidBranchName('-leading')).toBe(false)
+    expect(isValidBranchName('.hidden')).toBe(false)
+    expect(isValidBranchName('trailing.')).toBe(false)
+    expect(isValidBranchName('trailing/')).toBe(false)
+    expect(isValidBranchName('a//b')).toBe(false)
+    expect(isValidBranchName('a/.b')).toBe(false)
+  })
+})
+
+describe('create branch', () => {
+  function openCreate(containerEl: HTMLElement): void {
+    const buttons = [...containerEl.querySelectorAll('button')]
+    const create = buttons.find(button => button.textContent === en['create.button'])
+    expect(create).not.toBeUndefined()
+    click(create as Element)
+  }
+
+  it('shows the create action at the bottom of the menu', async () => {
+    const { props } = makeProps({ cwd: 'D:\\repo' })
+    const containerEl = render(props)
+    await settle()
+    click(containerEl.querySelector('button') as Element)
+    expect(containerEl.textContent).toContain(en['create.button'])
+  })
+
+  it('opens the dialog, creates the branch on confirm, and closes', async () => {
+    const { props, createBranch } = makeProps({ cwd: 'D:\\repo' })
+    const containerEl = render(props)
+    await settle()
+    click(containerEl.querySelector('button') as Element)
+    openCreate(containerEl)
+
+    const dialog = document.body.querySelector('[role="dialog"]')
+    expect(dialog).not.toBeNull()
+    expect(dialog?.textContent).toContain(en['create.title'])
+
+    const input = dialog?.querySelector('input') as HTMLInputElement
+    typeQuery(input, 'feature/from-ui')
+    const confirm = [...(dialog?.querySelectorAll('button') ?? [])]
+      .find(button => button.textContent === en['create.confirm'])
+    click(confirm as Element)
+
+    expect(createBranch).toHaveBeenCalledWith('D:\\repo', 'feature/from-ui')
+    await settle()
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+  })
+
+  it('keeps the dialog open and shows git error when creation fails', async () => {
+    const { props, createBranch } = makeProps({
+      cwd: 'D:\\repo',
+      createError: new Error("fatal: a branch named 'main' already exists"),
+    })
+    const containerEl = render(props)
+    await settle()
+    click(containerEl.querySelector('button') as Element)
+    openCreate(containerEl)
+
+    const dialog = document.body.querySelector('[role="dialog"]')
+    const input = dialog?.querySelector('input') as HTMLInputElement
+    typeQuery(input, 'main')
+    const confirm = [...(dialog?.querySelectorAll('button') ?? [])]
+      .find(button => button.textContent === en['create.confirm'])
+    click(confirm as Element)
+
+    expect(createBranch).toHaveBeenCalledWith('D:\\repo', 'main')
+    await settle()
+    const dialogAfter = document.body.querySelector('[role="dialog"]')
+    expect(dialogAfter).not.toBeNull()
+    const alert = dialogAfter?.querySelector('[role="alert"]')
+    expect(alert?.textContent).toContain('already exists')
+  })
+
+  it('disables confirm and shows an inline error for an invalid name', async () => {
+    const { props, createBranch } = makeProps({ cwd: 'D:\\repo' })
+    const containerEl = render(props)
+    await settle()
+    click(containerEl.querySelector('button') as Element)
+    openCreate(containerEl)
+
+    const dialog = document.body.querySelector('[role="dialog"]')
+    const input = dialog?.querySelector('input') as HTMLInputElement
+    typeQuery(input, 'bad name')
+
+    // The error appears live while typing; confirm stays disabled.
+    const alert = dialog?.querySelector('[role="alert"]')
+    expect(alert?.textContent).toContain(en['create.error.invalid'])
+    const confirm = [...(dialog?.querySelectorAll('button') ?? [])]
+      .find(button => button.textContent === en['create.confirm'])
+    expect((confirm as HTMLButtonElement).disabled).toBe(true)
+
+    // Enter on the invalid name submits nothing.
+    act(() => {
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    })
+    await settle()
+    expect(createBranch).not.toHaveBeenCalled()
   })
 })

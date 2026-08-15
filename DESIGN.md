@@ -77,6 +77,8 @@ ErrorResponse  { error: { code: string; message: string } }
 - `POST /plugin/ui-git-branch/switch` → 200 `{ ok: true, branch }`；git 非零退出 → 409
   `{ error: { code: 'switch-conflict' | 'switch-failed', message: <git stderr> } }`；cwd/branch
   非法 → 400。
+- `POST /plugin/ui-git-branch/create`（0.2.0）→ 200 `{ ok: true, branch }`（`git switch -c <name>`，
+  从 HEAD 创建并签出）；同名分支 → 409 `branch-exists`，其他失败 → 409 `create-failed`。
 
 ### 4.2 host 侧 git 调用（`src/git.ts`）
 

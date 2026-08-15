@@ -13,7 +13,7 @@ import { describe, expect, it } from 'vitest'
 import {
   ExecGitRunner, GitUnavailableError, type GitCommandResult, type GitRunner,
 } from '../src/git.ts'
-import { parseSwitchRequest, statusOf, switchTo, SwitchFailure } from '../src/index.ts'
+import { parseSwitchRequest, statusOf, switchTo, createBranch, SwitchFailure } from '../src/index.ts'
 
 const hasGit = spawnSync('git', ['--version'], { windowsHide: true }).status === 0
 
@@ -145,6 +145,37 @@ describe('switchTo', () => {
   })
 })
 
+describe('createBranch', () => {
+  it('resolves with the new branch and passes the bare -c argument form', async () => {
+    const seen: string[][] = []
+    const runner = new FakeRunner((args: readonly string[]) => {
+      seen.push([...args])
+      return ok('')
+    })
+    await expect(createBranch(runner, { cwd: 'D:\\repo', branch: 'feature/new' }))
+      .resolves.toEqual({ ok: true, branch: 'feature/new' })
+    expect(seen).toEqual([['switch', '-c', 'feature/new']])
+  })
+
+  it('classifies an existing-branch collision as branch-exists', async () => {
+    const runner = new FakeRunner(() => fail(128, "fatal: a branch named 'main' already exists"))
+    await expect(createBranch(runner, { cwd: 'D:\\repo', branch: 'main' }))
+      .rejects.toMatchObject({ name: 'SwitchFailure', code: 'branch-exists', status: 409 })
+  })
+
+  it('classifies other failures as create-failed', async () => {
+    const runner = new FakeRunner(() => fail(128, "fatal: 'bad name' is not a valid branch name"))
+    await expect(createBranch(runner, { cwd: 'D:\\repo', branch: 'bad name' }))
+      .rejects.toMatchObject({ name: 'SwitchFailure', code: 'create-failed', status: 409 })
+  })
+
+  it('surfaces git-unavailable as a 500 failure', async () => {
+    const runner = new FakeRunner(() => new GitUnavailableError('git executable not found'))
+    await expect(createBranch(runner, { cwd: 'D:\\repo', branch: 'feature/new' }))
+      .rejects.toMatchObject({ name: 'SwitchFailure', code: 'git-unavailable', status: 500 })
+  })
+})
+
 describe('parseSwitchRequest', () => {
   it('accepts a well-formed write', () => {
     expect(parseSwitchRequest({ cwd: 'D:\\repo', branch: 'feature/one' }))
@@ -218,6 +249,37 @@ describe.skipIf(!hasGit)('real git integration', () => {
       expect(failure).toBeInstanceOf(SwitchFailure)
       expect((failure as SwitchFailure).code).toBe('switch-conflict')
       expect((failure as SwitchFailure).message).toMatch(/would be overwritten|local changes/i)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('creates a branch and checks it out, and refuses a duplicate', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-git-branch-'))
+    const runner = new ExecGitRunner()
+    try {
+      const run = (args: readonly string[]) => runner.run(args, dir)
+      expect((await run(['init', '-b', 'main'])).code).toBe(0)
+      await run(['config', 'user.name', 't'])
+      await run(['config', 'user.email', 't@example.com'])
+      writeFileSync(join(dir, 'file.txt'), 'hello\n')
+      expect((await run(['add', 'file.txt'])).code).toBe(0)
+      expect((await run(['commit', '-m', 'init'])).code).toBe(0)
+
+      await expect(createBranch(runner, { cwd: dir, branch: 'feature/new' }))
+        .resolves.toEqual({ ok: true, branch: 'feature/new' })
+      const status = await statusOf(runner, dir)
+      expect(status.branch).toBe('feature/new')
+      expect(status.branches).toContain('feature/new')
+
+      // Working-tree edits carry over to the new branch (same HEAD).
+      writeFileSync(join(dir, 'file.txt'), 'dirty\n')
+
+      const duplicate = await createBranch(runner, { cwd: dir, branch: 'feature/new' })
+        .catch((error: unknown) => error)
+      expect(duplicate).toBeInstanceOf(SwitchFailure)
+      expect((duplicate as SwitchFailure).code).toBe('branch-exists')
+      await expect(statusOf(runner, dir)).resolves.toMatchObject({ branch: 'feature/new' })
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

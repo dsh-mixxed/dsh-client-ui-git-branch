@@ -17,7 +17,7 @@ import type { Context } from '@deepseek-ai/cordis'
 // Type-only: pulls the ctx.webServer Context merge.
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import { ExecGitRunner, GitUnavailableError, type GitRunner } from './git.ts'
-import type { ErrorResponse, StatusResponse, SwitchRequest, SwitchResponse } from './wire.ts'
+import type { CreateResponse, ErrorResponse, StatusResponse, SwitchRequest, SwitchResponse } from './wire.ts'
 
 export const name = 'ui-git-branch'
 
@@ -164,6 +164,36 @@ export class SwitchFailure extends Error {
   }
 }
 
+/** Git stderr marker for a branch that already exists. */
+const BRANCH_EXISTS_MARKERS = /already exists/i
+
+/**
+ * Create a new branch from HEAD and check it out (`git switch -c <branch>`).
+ * A non-zero exit — typically a name collision — is returned as a 409
+ * conflict carrying git's own stderr.
+ * @param runner - the git runner.
+ * @param request - validated create write (same shape as a switch write).
+ * @returns the success body, or a rejection carrying the classified failure.
+ */
+export async function createBranch(runner: GitRunner, request: SwitchRequest): Promise<CreateResponse> {
+  let result
+  try {
+    // No `--` here: after `-c <name>` the positional would be read as the
+    // start-point ref, so a bare `-c` argument is the correct form (branch
+    // names cannot start with `-`, and the name travels as a single argv).
+    result = await runner.run(['switch', '-c', request.branch], request.cwd)
+  } catch (error) {
+    if (error instanceof GitUnavailableError) {
+      throw new SwitchFailure('git-unavailable', error.message, 500)
+    }
+    throw error
+  }
+  if (result.code === 0) return { ok: true, branch: request.branch }
+  const message = result.stderr.trim() !== '' ? result.stderr.trim() : result.stdout.trim()
+  const code = BRANCH_EXISTS_MARKERS.test(message) ? 'branch-exists' : 'create-failed'
+  throw new SwitchFailure(code, message !== '' ? message : `git switch -c exited with code ${result.code}`, 409)
+}
+
 /** Plugin body: register the two routes and answer them. */
 export function apply(ctx: Context): void {
   const runner = new ExecGitRunner()
@@ -194,6 +224,19 @@ export function apply(ctx: Context): void {
     }
   }
 
+  const handleCreate = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+    try {
+      const request = parseSwitchRequest(await readJsonBody(req))
+      sendJson(res, 200, await createBranch(runner, request))
+    } catch (error) {
+      if (error instanceof SwitchFailure) {
+        sendJson(res, error.status, errorBody(error.code, error.message))
+        return
+      }
+      sendJson(res, 400, errorBody('bad-request', error instanceof Error ? error.message : String(error)))
+    }
+  }
+
   ctx.effect(() => ctx.webServer.register({
     kind: 'prefix',
     path: API_PREFIX,
@@ -205,6 +248,10 @@ export function apply(ctx: Context): void {
       }
       if (pathname === `${API_PREFIX}/switch` && req.method === 'POST') {
         await handleSwitch(req, res)
+        return
+      }
+      if (pathname === `${API_PREFIX}/create` && req.method === 'POST') {
+        await handleCreate(req, res)
         return
       }
       sendJson(res, 404, errorBody('not-found', `unknown ${API_PREFIX} route`))

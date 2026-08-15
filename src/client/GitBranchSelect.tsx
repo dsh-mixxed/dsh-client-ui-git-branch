@@ -9,6 +9,9 @@
  * another branch switches the work tree via the host route, and a rejected
  * switch (uncommitted changes blocking checkout, …) announces git's own
  * stderr through the shared transient Toast anchored to the composer card.
+ * A "New branch" action at the bottom of the menu opens a modal that creates
+ * a branch from HEAD and checks it out (git switch -c); failures surface
+ * inside the dialog.
  */
 import {
   useCallback, useEffect, useId, useMemo, useRef, useState,
@@ -16,8 +19,8 @@ import {
 } from 'react'
 import clsx from 'clsx'
 import {
-  IconBranchOutline16, IconCheckOutline16, IconChevronDownOutline14,
-  IconSearchOutline16, IconWarningOutline16, Toast,
+  Button, IconBranchOutline16, IconCheckOutline16, IconChevronDownOutline14,
+  IconPlusOutline16, IconSearchOutline16, IconWarningOutline16, Input, Modal, Toast,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { StatusResponse } from '../wire.ts'
@@ -29,6 +32,8 @@ export interface GitBranchInjected {
   loadStatus: (cwd: string) => Promise<StatusResponse>
   /** Switch the work tree to another local branch; rejects with the git error. */
   switchBranch: (cwd: string, branch: string) => Promise<void>
+  /** Create a branch from HEAD and check it out; rejects with the git error. */
+  createBranch: (cwd: string, branch: string) => Promise<void>
 }
 
 /** Full props: runtime (owner + standard kit) + injected face + locale seat. */
@@ -55,9 +60,27 @@ export function fuzzyMatch(query: string, branch: string): boolean {
   return false
 }
 
+/**
+ * Practical subset of `git check-ref-format`: a branch name must be non-empty,
+ * short enough, and free of the characters and component shapes git refuses.
+ * @param name - the raw input value.
+ * @returns whether the name may be submitted.
+ */
+export function isValidBranchName(name: string): boolean {
+  const value = name.trim()
+  if (value === '' || value.length > 255) return false
+  if (/[ ~^:?*[\\]/.test(value)) return false
+  if (value.includes('..') || value.includes('@{') || value.includes('//')) return false
+  if (value.startsWith('-') || value.startsWith('.') || value.endsWith('.') || value.endsWith('/')) {
+    return false
+  }
+  if (value.includes('/.')) return false
+  return true
+}
+
 /** Render the composer git branch seat. */
 export function GitBranchSelect(
-  { sessionId, useSessions, loadStatus, switchBranch, t }: GitBranchSelectProps,
+  { sessionId, useSessions, loadStatus, switchBranch, createBranch, t }: GitBranchSelectProps,
 ) {
   // The session workspace root, read from the standard session-list seat
   // (same canon the workspace picker and tool rows use).
@@ -71,6 +94,11 @@ export function GitBranchSelect(
   const [busy, setBusy] = useState(false)
   const [toast, setToast] = useState<{ seq: number; text: string } | null>(null)
   const toastSeq = useRef(0)
+  // Create-dialog state.
+  const [createOpen, setCreateOpen] = useState(false)
+  const [createName, setCreateName] = useState('')
+  const [createError, setCreateError] = useState<string | null>(null)
+  const [createBusy, setCreateBusy] = useState(false)
   // Stale-response guard: only the latest requested status may land.
   const requestSeq = useRef(0)
   const rootRef = useRef<HTMLDivElement | null>(null)
@@ -99,11 +127,15 @@ export function GitBranchSelect(
   }, [cwd, loadStatus])
 
   // Load on mount and whenever the session workspace changes; a workspace
-  // switch also closes the menu and clears the search.
+  // switch also closes the menu and clears transient state.
   useEffect(() => {
     setOpen(false)
     setQuery('')
     setBusy(false)
+    setCreateOpen(false)
+    setCreateName('')
+    setCreateError(null)
+    setCreateBusy(false)
     if (cwd === undefined) {
       setData(null)
       setLoading(false)
@@ -195,6 +227,37 @@ export function GitBranchSelect(
         const message = error instanceof Error ? error.message : String(error)
         toastSeq.current += 1
         setToast({ seq: toastSeq.current, text: t('switch.failed', { branch, message }) })
+      },
+    )
+  }
+
+  const openCreate = (): void => {
+    setCreateName('')
+    setCreateError(null)
+    setCreateOpen(true)
+  }
+
+  const submitCreate = (): void => {
+    if (cwd === undefined || createBusy) return
+    const name = createName.trim()
+    if (!isValidBranchName(name)) {
+      setCreateError(t('create.error.invalid'))
+      return
+    }
+    setCreateBusy(true)
+    setCreateError(null)
+    createBranch(cwd, name).then(
+      () => {
+        setCreateBusy(false)
+        setCreateOpen(false)
+        setCreateName('')
+        // The new branch is now current; refresh the list in place.
+        load(true)
+      },
+      (error) => {
+        setCreateBusy(false)
+        const message = error instanceof Error ? error.message : String(error)
+        setCreateError(t('create.failed', { branch: name, message }))
       },
     )
   }
@@ -301,8 +364,72 @@ export function GitBranchSelect(
               </div>
             )}
           </div>
+
+          <div className={css.createRow}>
+            <button
+              type="button"
+              className={css.create}
+              onClick={openCreate}
+            >
+              <IconPlusOutline16 size={14} />
+              <span>{t('create.button')}</span>
+            </button>
+          </div>
         </div>
       )}
+
+      <Modal
+        open={createOpen}
+        onClose={() => { if (!createBusy) setCreateOpen(false) }}
+        title={t('create.title')}
+        closeLabel={t('create.cancel')}
+        description={current === null ? undefined : t('create.description', { branch: current })}
+        footer={(
+          <>
+            <Button variant="ghost" size="sm" disabled={createBusy} onClick={() => { setCreateOpen(false) }}>
+              {t('create.cancel')}
+            </Button>
+            <Button
+              variant="primary"
+              size="sm"
+              disabled={createBusy || !isValidBranchName(createName)}
+              onClick={submitCreate}
+            >
+              {t('create.confirm')}
+            </Button>
+          </>
+        )}
+      >
+        <Input
+          autoFocus
+          icon={<IconBranchOutline16 />}
+          placeholder={t('create.placeholder')}
+          aria-label={t('create.placeholder')}
+          value={createName}
+          spellCheck={false}
+          onChange={event => {
+            const value = event.target.value
+            setCreateName(value)
+            // Live validation: an invalid name explains itself while typing.
+            if (value.trim() !== '' && !isValidBranchName(value)) {
+              setCreateError(t('create.error.invalid'))
+            } else {
+              setCreateError(null)
+            }
+          }}
+          onKeyDown={event => {
+            if (event.key === 'Enter' && !createBusy && isValidBranchName(createName)) {
+              event.preventDefault()
+              submitCreate()
+            }
+          }}
+        />
+        {createError !== null && (
+          <div className={css.createError} role="alert">
+            {createError}
+          </div>
+        )}
+      </Modal>
 
       {toast !== null && (
         <Toast

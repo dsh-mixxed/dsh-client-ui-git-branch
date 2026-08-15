@@ -61,11 +61,28 @@ async function switchBranch(cwd: string, branch: string): Promise<void> {
   }
 }
 
+/** Create a branch from HEAD and check it out, rejecting with git's own message. */
+async function createBranch(cwd: string, branch: string): Promise<void> {
+  const request: SwitchRequest = { cwd, branch }
+  const response = await fetch('/plugin/ui-git-branch/create', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', accept: 'application/json' },
+    body: JSON.stringify(request),
+  })
+  if (!response.ok) {
+    const body = await response.json().catch(() => null) as ErrorResponse | null
+    const message = body?.error !== undefined
+      ? body.error.message
+      : `create request failed with status ${response.status}`
+    throw new Error(message)
+  }
+}
+
 /** Contribute the git branch seat to the composer tool row. */
 export function apply(ctx: ClientContext): void {
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'ui-git-branch: dictionaries')
 
-  const injected = (): GitBranchInjected => ({ loadStatus, switchBranch })
+  const injected = (): GitBranchInjected => ({ loadStatus, switchBranch, createBranch })
 
   ctx.slots.inject('conversation.input.right', () => ctx.slots.register({
     name: 'conversation.input.right',

@@ -8,6 +8,8 @@ const keys = [
   'status.loading', 'status.empty', 'status.noMatches', 'status.error', 'retry',
   'current', 'detached',
   'switch.failed',
+  'create.button', 'create.title', 'create.description', 'create.placeholder',
+  'create.confirm', 'create.cancel', 'create.error.invalid', 'create.failed',
 ] as const
 
 export type GitBranchKey = typeof keys[number]
@@ -26,6 +28,14 @@ export const en: Record<GitBranchKey, string> = {
   'current': 'Current branch',
   'detached': 'detached HEAD',
   'switch.failed': 'Could not switch to “{branch}”: {message}',
+  'create.button': 'New branch',
+  'create.title': 'Create branch',
+  'create.description': 'Create a new branch from {branch} and switch to it.',
+  'create.placeholder': 'Branch name',
+  'create.confirm': 'Create',
+  'create.cancel': 'Cancel',
+  'create.error.invalid': 'Invalid branch name.',
+  'create.failed': 'Could not create branch “{branch}”: {message}',
 }
 
 export const zh: Record<GitBranchKey, string> = {
@@ -42,4 +52,12 @@ export const zh: Record<GitBranchKey, string> = {
   'current': '当前分支',
   'detached': '分离 HEAD',
   'switch.failed': '无法切换到分支“{branch}”：{message}',
+  'create.button': '新建分支',
+  'create.title': '创建分支',
+  'create.description': '从当前分支 {branch} 创建新分支并切换到新分支。',
+  'create.placeholder': '分支名称',
+  'create.confirm': '创建',
+  'create.cancel': '取消',
+  'create.error.invalid': '分支名称无效。',
+  'create.failed': '无法创建分支“{branch}”：{message}',
 }

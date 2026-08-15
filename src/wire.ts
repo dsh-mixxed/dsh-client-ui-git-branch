@@ -32,6 +32,16 @@ export interface SwitchResponse {
   readonly branch: string
 }
 
+/**
+ * Successful create-and-checkout response (POST /plugin/ui-git-branch/create):
+ * the new branch is created from HEAD and checked out.
+ */
+export interface CreateResponse {
+  readonly ok: true
+  /** The newly created branch the work tree is now on. */
+  readonly branch: string
+}
+
 /** Uniform plugin-route error body. */
 export interface ErrorResponse {
   readonly error: { readonly code: string; readonly message: string }
