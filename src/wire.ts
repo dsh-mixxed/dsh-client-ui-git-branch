@@ -1,0 +1,38 @@
+/**
+ * Wire contract for the dsh-client-ui-git-branch API. The host half produces
+ * it; the browser half consumes it over the plugin's HTTP route. Keep this
+ * file type-only: both halves import it and it must never carry runtime code
+ * into a bundle.
+ */
+
+/** The git state of one session workspace, as the browser renders it. */
+export interface StatusResponse {
+  /** Whether a `git` executable is available on PATH. */
+  readonly gitAvailable: boolean
+  /** Whether cwd (or an ancestor) lies inside a git work tree. */
+  readonly repo: boolean
+  /** The current branch name; null on a detached HEAD. */
+  readonly branch: string | null
+  /** Local branch names (`git branch --format=%(refname:short)` order). */
+  readonly branches: readonly string[]
+}
+
+/** One branch-switch write sent to POST /plugin/ui-git-branch/switch. */
+export interface SwitchRequest {
+  /** The session workspace path git commands run in. */
+  readonly cwd: string
+  /** The target local branch name. */
+  readonly branch: string
+}
+
+/** Successful switch response. */
+export interface SwitchResponse {
+  readonly ok: true
+  /** The branch the work tree is now on. */
+  readonly branch: string
+}
+
+/** Uniform plugin-route error body. */
+export interface ErrorResponse {
+  readonly error: { readonly code: string; readonly message: string }
+}
