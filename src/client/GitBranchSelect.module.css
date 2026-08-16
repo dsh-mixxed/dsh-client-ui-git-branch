@@ -297,12 +297,9 @@
   font-weight: 500;
 }
 
-/* The current branch is marked with a distinct color: the brand-blue business
-   tone for the name + check, with a subtle accent-tinted row background. */
-.current {
-  background: var(--dsw-alias-interactive-bg-hover-accent);
-}
-
+/* The current branch is marked with the brand-blue business tone for the
+   name + check only — the row background stays untouched, so the selection
+   reads as colored text + check, not a filled row. */
 .current .branchName {
   color: var(--dsw-alias-state-business-primary);
 }
