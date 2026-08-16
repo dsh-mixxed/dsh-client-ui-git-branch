@@ -14,11 +14,11 @@ import { basename, resolve } from 'node:path'
 import { build } from 'esbuild'
 import { transform } from 'lightningcss'
 
-// Client-modules entry id — the loader entry name / npm package name
-// (client-modules keys the boot graph, /plugins/<id>/client.js route and
-// __ModuleLoader__ registration by the loader entry's package name). NOT the
-// cordis plugin id, which stays 'ui-git-branch' (exported `name` in src/index.ts).
-const PKG_ID = 'dsh-client-ui-git-branch'
+// Client-modules entry id — the npm package name (client-modules keys the boot
+// graph, the /plugins/<id>/client.js route and the __ModuleLoader__
+// registration by the loader entry's package name). NOT the cordis plugin id,
+// which stays 'ui-git-branch' (exported `name` in src/index.ts).
+const PKG_ID = '@dsh-mixxed/dsh-client-ui-git-branch'
 
 /** The browser module table the shell seeds (harness PLATFORM_MODULES). */
 const PLATFORM_MODULES = [
