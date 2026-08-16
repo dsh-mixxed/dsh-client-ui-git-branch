@@ -10,6 +10,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+import { normalizeStatus } from '../src/client/index.ts'
 import { GitBranchSelect, fuzzyMatch, isValidBranchName, type GitBranchSelectProps } from '../src/client/GitBranchSelect.tsx'
 import { en, type GitBranchKey } from '../src/client/locales.ts'
 import type { StatusResponse } from '../src/wire.ts'
@@ -118,6 +119,28 @@ function typeQuery(input: HTMLInputElement, value: string): void {
 afterEach(() => {
   act(() => { root?.unmount() })
   document.body.innerHTML = ''
+})
+
+describe('normalizeStatus', () => {
+  it('folds legacy string branches into branch rows (mid-upgrade host)', () => {
+    const status = normalizeStatus({
+      gitAvailable: true,
+      repo: true,
+      branch: 'main',
+      branches: ['dev', 'main'] as never,
+    })
+    expect(status.branches).toEqual([{ name: 'dev' }, { name: 'main' }])
+  })
+
+  it('keeps object rows untouched', () => {
+    const status = normalizeStatus({
+      gitAvailable: true,
+      repo: true,
+      branch: 'main',
+      branches: [{ name: 'main', upstream: 'origin/main', ahead: 2 }],
+    })
+    expect(status.branches).toEqual([{ name: 'main', upstream: 'origin/main', ahead: 2 }])
+  })
 })
 
 describe('fuzzyMatch', () => {

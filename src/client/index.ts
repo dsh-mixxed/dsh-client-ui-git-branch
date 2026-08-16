@@ -15,7 +15,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-slots'
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 import { GitBranchSelect, type GitBranchInjected } from './GitBranchSelect.tsx'
 import { en, NS, zh, type GitBranchKey } from './locales.ts'
-import type { ErrorResponse, StatusResponse, SwitchRequest } from '../wire.ts'
+import type { BranchRow, ErrorResponse, StatusResponse, SwitchRequest } from '../wire.ts'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface LocaleNamespaceMap {
@@ -29,6 +29,22 @@ export { NS }
 /** Services required by the composer-seat registration. */
 export const inject = ['slots', 'locale']
 
+/**
+ * Normalize the status payload: a running instance may still carry an older
+ * node half whose `branches` are plain name strings (the client bundle
+ * hot-updates ahead of the host process, which cannot reload ESM in place).
+ * Fold those rows to the object shape so the list never renders blank while
+ * the process is mid-upgrade.
+ * @param body - the parsed status payload.
+ * @returns the normalized status.
+ */
+export function normalizeStatus(body: StatusResponse): StatusResponse {
+  const branches = (body.branches as readonly unknown[]).map(row =>
+    typeof row === 'string' ? { name: row } : row as BranchRow,
+  )
+  return { ...body, branches }
+}
+
 /** Load the git status of one workspace directory, rejecting on transport or HTTP errors. */
 async function loadStatus(cwd: string): Promise<StatusResponse> {
   const response = await fetch(`/plugin/ui-git-branch/status?cwd=${encodeURIComponent(cwd)}`, {
@@ -41,7 +57,7 @@ async function loadStatus(cwd: string): Promise<StatusResponse> {
       : `status request failed with status ${response.status}`
     throw new Error(message)
   }
-  return body
+  return normalizeStatus(body)
 }
 
 /** Switch the work tree to another local branch, rejecting with git's own message. */
