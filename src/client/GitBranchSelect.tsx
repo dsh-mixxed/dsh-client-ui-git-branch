@@ -34,6 +34,8 @@ export interface GitBranchInjected {
   switchBranch: (cwd: string, branch: string) => Promise<void>
   /** Create a branch from HEAD and check it out; rejects with the git error. */
   createBranch: (cwd: string, branch: string) => Promise<void>
+  /** Check out a remote branch as a new local tracking branch; rejects with the git error. */
+  trackRemote: (cwd: string, branch: string) => Promise<void>
 }
 
 /** Full props: runtime (owner + standard kit) + injected face + locale seat. */
@@ -100,7 +102,7 @@ function branchTitle(row: BranchRow, t: GitBranchSelectProps['t']): string {
 
 /** Render the composer git branch seat. */
 export function GitBranchSelect(
-  { sessionId, useSessions, loadStatus, switchBranch, createBranch, t }: GitBranchSelectProps,
+  { sessionId, useSessions, loadStatus, switchBranch, createBranch, trackRemote, t }: GitBranchSelectProps,
 ) {
   // The session workspace root, read from the standard session-list seat
   // (same canon the workspace picker and tool rows use).
@@ -181,9 +183,15 @@ export function GitBranchSelect(
   }, [open])
 
   const branches = data === null ? [] : data.branches
-  const filtered = useMemo(
+  const remoteOnly = data === null ? [] : data.remoteOnly
+  // Search runs across BOTH groups; empty groups collapse away.
+  const localFiltered = useMemo(
     () => branches.filter(row => fuzzyMatch(query, row.name)),
     [branches, query],
+  )
+  const remoteFiltered = useMemo(
+    () => remoteOnly.filter(name => fuzzyMatch(query, name)),
+    [remoteOnly, query],
   )
 
   // Not a git work tree (or no git, or no workspace): render nothing.
@@ -261,6 +269,25 @@ export function GitBranchSelect(
     setCreateName('')
     setCreateError(null)
     setCreateOpen(true)
+  }
+
+  /** Check out a remote-only branch as a new local tracking branch. */
+  const track = (branch: string): void => {
+    if (cwd === undefined || busy) return
+    setBusy(true)
+    trackRemote(cwd, branch).then(
+      () => {
+        setBusy(false)
+        // The new local branch is now current; refresh the list in place.
+        load(true)
+      },
+      (error) => {
+        setBusy(false)
+        const message = error instanceof Error ? error.message : String(error)
+        toastSeq.current += 1
+        setToast({ seq: toastSeq.current, text: t('track.failed', { branch, message }) })
+      },
+    )
   }
 
   const submitCreate = (): void => {
@@ -367,7 +394,10 @@ export function GitBranchSelect(
             </div>
           )}
           <div className={clsx(css.list, 'scrollable')}>
-            {filtered.map(row => {
+            {localFiltered.length > 0 && (
+              <div className={css.groupTitle}>{t('group.local')}</div>
+            )}
+            {localFiltered.map(row => {
               const selected = row.name === current
               return (
                 <button
@@ -403,7 +433,28 @@ export function GitBranchSelect(
                 </button>
               )
             })}
-            {!loading && filtered.length === 0 && (
+            {remoteFiltered.length > 0 && (
+              <div className={css.groupTitle}>{t('group.remote')}</div>
+            )}
+            {remoteFiltered.map(name => (
+              <button
+                ref={itemRef()}
+                type="button"
+                role="menuitemradio"
+                aria-checked={false}
+                className={css.option}
+                key={name}
+                title={name}
+                disabled={busy}
+                onClick={() => { track(name) }}
+              >
+                <span className={css.optionCopy}>
+                  <span className={css.branchName}>{name}</span>
+                </span>
+                <span className={css.check} />
+              </button>
+            ))}
+            {!loading && localFiltered.length === 0 && remoteFiltered.length === 0 && (
               <div className={css.empty}>
                 {query.trim() === '' ? t('status.empty') : t('status.noMatches')}
               </div>

@@ -96,18 +96,18 @@ export async function statusOf(runner: GitRunner, cwd: string): Promise<StatusRe
   try {
     const version = await runner.run(['--version'], cwd)
     if (version.code !== 0) {
-      return { gitAvailable: false, repo: false, branch: null, branches: [] }
+      return { gitAvailable: false, repo: false, branch: null, branches: [], remoteOnly: [] }
     }
   } catch (error) {
     if (error instanceof GitUnavailableError) {
-      return { gitAvailable: false, repo: false, branch: null, branches: [] }
+      return { gitAvailable: false, repo: false, branch: null, branches: [], remoteOnly: [] }
     }
     throw error
   }
 
   const workTree = await runner.run(['rev-parse', '--is-inside-work-tree'], cwd)
   if (workTree.code !== 0 || workTree.stdout.trim() !== 'true') {
-    return { gitAvailable: true, repo: false, branch: null, branches: [] }
+    return { gitAvailable: true, repo: false, branch: null, branches: [], remoteOnly: [] }
   }
 
   const branch = await runner.run(['branch', '--show-current'], cwd)
@@ -127,7 +127,31 @@ export async function statusOf(runner: GitRunner, cwd: string): Promise<StatusRe
     list.push({ name: currentBranch })
   }
 
-  return { gitAvailable: true, repo: true, branch: currentBranch, branches: list }
+  // Remote-only branches: remote refs with no corresponding local branch
+  // (the remote name prefix stripped; `origin/HEAD` symrefs excluded).
+  const remotes = await runner.run(['for-each-ref', 'refs/remotes', '--format=%(refname:short)'], cwd)
+  const remoteOnly = remotes.code === 0
+    ? remoteOnlyBranches(remotes.stdout, new Set(list.map(row => row.name)))
+    : []
+
+  return { gitAvailable: true, repo: true, branch: currentBranch, branches: list, remoteOnly }
+}
+
+/** Compute the remote-only branch short names (no corresponding local branch). */
+export function remoteOnlyBranches(stdout: string, localNames: ReadonlySet<string>): string[] {
+  const only: string[] = []
+  for (const line of stdout.split('\n')) {
+    const ref = line.trim()
+    if (ref === '') continue
+    if (ref.endsWith('/HEAD')) continue
+    // A valid remote branch is always `remote/branch`; bare refs like
+    // `refs/remotes/origin` (no slash) are not branch names.
+    const slash = ref.indexOf('/')
+    if (slash <= 0) continue
+    const localName = ref.slice(slash + 1)
+    if (!localNames.has(localName)) only.push(ref)
+  }
+  return only
 }
 
 /** Parse `for-each-ref` output lines into branch rows with upstream facts. */
@@ -226,6 +250,33 @@ export async function createBranch(runner: GitRunner, request: SwitchRequest): P
   throw new SwitchFailure(code, message !== '' ? message : `git switch -c exited with code ${result.code}`, 409)
 }
 
+/**
+ * Check out a remote branch into a new local tracking branch
+ * (`git switch --track <remote-branch>`; the local name is the remote short
+ * name minus its remote prefix, e.g. `origin/feature` → `feature`).
+ * @param runner - the git runner.
+ * @param request - validated track write (`branch` = remote short name).
+ * @returns the success body naming the new local branch.
+ */
+export async function trackRemote(runner: GitRunner, request: SwitchRequest): Promise<SwitchResponse> {
+  let result
+  try {
+    result = await runner.run(['switch', '--track', request.branch], request.cwd)
+  } catch (error) {
+    if (error instanceof GitUnavailableError) {
+      throw new SwitchFailure('git-unavailable', error.message, 500)
+    }
+    throw error
+  }
+  if (result.code === 0) {
+    const slash = request.branch.indexOf('/')
+    const localName = slash >= 0 ? request.branch.slice(slash + 1) : request.branch
+    return { ok: true, branch: localName }
+  }
+  const message = result.stderr.trim() !== '' ? result.stderr.trim() : result.stdout.trim()
+  throw new SwitchFailure('track-failed', message !== '' ? message : `git switch --track exited with code ${result.code}`, 409)
+}
+
 /** Plugin body: register the two routes and answer them. */
 export function apply(ctx: Context): void {
   const runner = new ExecGitRunner()
@@ -269,6 +320,19 @@ export function apply(ctx: Context): void {
     }
   }
 
+  const handleTrack = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+    try {
+      const request = parseSwitchRequest(await readJsonBody(req))
+      sendJson(res, 200, await trackRemote(runner, request))
+    } catch (error) {
+      if (error instanceof SwitchFailure) {
+        sendJson(res, error.status, errorBody(error.code, error.message))
+        return
+      }
+      sendJson(res, 400, errorBody('bad-request', error instanceof Error ? error.message : String(error)))
+    }
+  }
+
   ctx.effect(() => ctx.webServer.register({
     kind: 'prefix',
     path: API_PREFIX,
@@ -284,6 +348,10 @@ export function apply(ctx: Context): void {
       }
       if (pathname === `${API_PREFIX}/create` && req.method === 'POST') {
         await handleCreate(req, res)
+        return
+      }
+      if (pathname === `${API_PREFIX}/track` && req.method === 'POST') {
+        await handleTrack(req, res)
         return
       }
       sendJson(res, 404, errorBody('not-found', `unknown ${API_PREFIX} route`))

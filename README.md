@@ -25,6 +25,11 @@ uncommitted changes that would be overwritten — a toast pops up with git's own
 - **New branch action** at the bottom of the menu: a dialog asks for the branch name, then creates
   the branch from HEAD and checks it out (`git switch -c`); invalid names are flagged live, and
   collisions surface git's message inside the dialog.
+- **Local / Remote groups**: the list is split under `Local branches` and `Remote branches` headings.
+  The local group holds every local branch (tracked branches keep their upstream mapping);
+  the remote group shows only branches that exist remotely but have no local counterpart
+  (`origin/HEAD` excluded). The fuzzy search spans both groups, and clicking a remote branch
+  creates a local tracking branch and switches to it (`git switch --track`).
 - Full **zh / en i18n** and automatic **multi-theme** support through `--dsw-*` design tokens.
 - Detached-HEAD safe (trigger falls back to `HEAD`); unborn-HEAD repos still list the current branch.
 
@@ -32,18 +37,22 @@ uncommitted changes that would be overwritten — a toast pops up with git's own
 
 Dual-half package, no harness source changes:
 
-- **Node half** (`src/index.ts`, `src/git.ts`) — registers three HTTP routes on `ctx.webServer`:
+- **Node half** (`src/index.ts`, `src/git.ts`) — registers four HTTP routes on `ctx.webServer`:
   - `GET /plugin/ui-git-branch/status?cwd=<workspace>` → git availability, repo membership,
-    current branch, and the local branch list with upstream-tracking facts (one
-    `git for-each-ref` call: `%(upstream:short)` + `%(upstream:track)` → ahead/behind/gone).
+    current branch, the local branch list with upstream-tracking facts (one
+    `git for-each-ref` call: `%(upstream:short)` + `%(upstream:track)` → ahead/behind/gone),
+    and the remote-only branch short names (`refs/remotes` minus local counterparts and `*/HEAD`).
   - `POST /plugin/ui-git-branch/switch` `{ cwd, branch }` → `git switch -- <branch>`;
     non-zero exits return `409 { error: { code, message } }` with git's stderr.
   - `POST /plugin/ui-git-branch/create` `{ cwd, branch }` → `git switch -c <branch>`
     (create from HEAD and check out); an existing branch maps to `branch-exists`.
+  - `POST /plugin/ui-git-branch/track` `{ cwd, branch }` → `git switch --track <remote-branch>`
+    (remote-only checkout into a new local tracking branch).
   - Git runs via `node:child_process` `execFile` (argv-only, no shell).
 - **Browser half** (`src/client/`) — registers a `conversation.input.right` entry
   (`order: 100`, namespace `gitBranch`); reads the session workspace from the standard
-  `useSessions` kit and talks to the routes over same-origin fetch.
+  `useSessions` kit and talks to the routes over same-origin fetch. A normalization layer folds
+  legacy `string[]` branches from a mid-upgrade host so the list never renders blank.
 
 ## Install
 

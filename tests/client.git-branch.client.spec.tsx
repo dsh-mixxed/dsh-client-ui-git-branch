@@ -25,10 +25,15 @@ const REPO: StatusResponse = {
     { name: 'main', upstream: 'origin/main' },
     { name: 'release/2.0', upstream: 'origin/release/2.0', behind: 3 },
   ],
+  remoteOnly: ['origin/feature/new', 'origin/release-candidate'],
 }
 
-const NOT_A_REPO: StatusResponse = { gitAvailable: true, repo: false, branch: null, branches: [] }
-const NO_GIT: StatusResponse = { gitAvailable: false, repo: false, branch: null, branches: [] }
+const NOT_A_REPO: StatusResponse = {
+  gitAvailable: true, repo: false, branch: null, branches: [], remoteOnly: [],
+}
+const NO_GIT: StatusResponse = {
+  gitAvailable: false, repo: false, branch: null, branches: [], remoteOnly: [],
+}
 
 const MANY_BRANCHES: StatusResponse = {
   gitAvailable: true,
@@ -38,6 +43,7 @@ const MANY_BRANCHES: StatusResponse = {
     { name: 'b1' }, { name: 'b2' }, { name: 'b3' }, { name: 'b4' }, { name: 'b5' },
     { name: 'b6' }, { name: 'b7' },
   ],
+  remoteOnly: [],
 }
 
 /** Minimal translate: dictionary lookup + {param} interpolation. */
@@ -58,6 +64,7 @@ interface Overrides {
   statusError?: Error
   switchError?: Error
   createError?: Error
+  trackError?: Error
 }
 
 function makeProps(overrides: Overrides = {}) {
@@ -76,15 +83,21 @@ function makeProps(overrides: Overrides = {}) {
       ? Promise.reject(overrides.createError)
       : Promise.resolve(),
   )
+  const trackRemote = vi.fn((_cwd: string, _branch: string) =>
+    overrides.trackError !== undefined
+      ? Promise.reject(overrides.trackError)
+      : Promise.resolve(),
+  )
   const props = {
     sessionId: 's1',
     useSessions: (sel: (state: never) => unknown) => sel(sessionsState(overrides.cwd)),
     loadStatus,
     switchBranch,
     createBranch,
+    trackRemote,
     t: makeT(en),
   } as unknown as GitBranchSelectProps
-  return { props, loadStatus, switchBranch, createBranch }
+  return { props, loadStatus, switchBranch, createBranch, trackRemote }
 }
 
 let container: HTMLElement
@@ -127,19 +140,31 @@ describe('normalizeStatus', () => {
       gitAvailable: true,
       repo: true,
       branch: 'main',
-      branches: ['dev', 'main'] as never,
-    })
+      branches: ['dev', 'main'],
+    } as never)
     expect(status.branches).toEqual([{ name: 'dev' }, { name: 'main' }])
   })
 
-  it('keeps object rows untouched', () => {
+  it('defaults remoteOnly to empty when an older host omits it', () => {
     const status = normalizeStatus({
       gitAvailable: true,
       repo: true,
       branch: 'main',
       branches: [{ name: 'main', upstream: 'origin/main', ahead: 2 }],
+    } as never)
+    expect(status.remoteOnly).toEqual([])
+  })
+
+  it('keeps object rows and remoteOnly untouched', () => {
+    const status = normalizeStatus({
+      gitAvailable: true,
+      repo: true,
+      branch: 'main',
+      branches: [{ name: 'main', upstream: 'origin/main', ahead: 2 }],
+      remoteOnly: ['origin/feature'],
     })
     expect(status.branches).toEqual([{ name: 'main', upstream: 'origin/main', ahead: 2 }])
+    expect(status.remoteOnly).toEqual(['origin/feature'])
   })
 })
 
@@ -209,11 +234,78 @@ describe('menu', () => {
 
     const rows = [...containerEl.querySelectorAll('[role="menuitemradio"]')]
     const names = (row: Element) => row.querySelector(`.${css.branchName}`)?.textContent
-    expect(rows.map(names)).toEqual(['feature/one', 'main', 'release/2.0'])
+    // Local group first (with upstream details), then the remote-only group.
+    expect(rows.map(names)).toEqual(['feature/one', 'main', 'release/2.0', 'origin/feature/new', 'origin/release-candidate'])
     const currentRow = rows.find(row => names(row) === 'main')
     expect(currentRow?.classList.contains(css.current)).toBe(true)
     expect(currentRow?.getAttribute('aria-checked')).toBe('true')
     expect(rows.filter(row => row.getAttribute('aria-checked') === 'true')).toHaveLength(1)
+  })
+
+  it('separates the list into local and remote groups with titles', async () => {
+    const { props } = makeProps({ cwd: 'D:\\repo' })
+    const containerEl = render(props)
+    await settle()
+    click(containerEl.querySelector('button') as Element)
+
+    const titles = [...containerEl.querySelectorAll(`.${css.groupTitle}`)]
+    expect(titles.map(title => title.textContent)).toEqual([en['group.local'], en['group.remote']])
+
+    const rows = [...containerEl.querySelectorAll('[role="menuitemradio"]')]
+    // Remote rows carry no upstream detail and sit after the local group.
+    const remoteRow = rows.find(row => row.querySelector(`.${css.branchName}`)?.textContent === 'origin/feature/new')
+    expect(remoteRow).not.toBeUndefined()
+    expect(remoteRow?.querySelector(`.${css.detail}`)).toBeNull()
+  })
+
+  it('searches across both groups at once', async () => {
+    const { props } = makeProps({ cwd: 'D:\\repo' })
+    const containerEl = render(props)
+    await settle()
+    click(containerEl.querySelector('button') as Element)
+
+    const input = containerEl.querySelector('input[type="text"]') as HTMLInputElement
+    typeQuery(input, 'new') // matches local `feature/new`? no — remote origin/feature/new only
+    let rows = [...containerEl.querySelectorAll('[role="menuitemradio"]')]
+    let names = (row: Element) => row.querySelector(`.${css.branchName}`)?.textContent
+    expect(rows.map(names)).toEqual(['origin/feature/new'])
+
+    typeQuery(input, 'cand') // subsequence of release-candidate
+    rows = [...containerEl.querySelectorAll('[role="menuitemradio"]')]
+    expect(rows.map(names)).toEqual(['origin/release-candidate'])
+  })
+
+  it('tracks a remote-only branch into a local branch on click', async () => {
+    const { props, trackRemote } = makeProps({ cwd: 'D:\\repo' })
+    const containerEl = render(props)
+    await settle()
+    click(containerEl.querySelector('button') as Element)
+
+    const rows = [...containerEl.querySelectorAll('[role="menuitemradio"]')]
+    const remoteRow = rows.find(row => row.querySelector(`.${css.branchName}`)?.textContent === 'origin/feature/new')
+    click(remoteRow as Element)
+    expect(trackRemote).toHaveBeenCalledWith('D:\\repo', 'origin/feature/new')
+    await settle()
+  })
+
+  it('pops the toast when tracking a remote branch fails', async () => {
+    const { props } = makeProps({
+      cwd: 'D:\\repo',
+      trackError: new Error("fatal: a branch named 'feature' already exists"),
+    })
+    const containerEl = render(props)
+    await settle()
+    click(containerEl.querySelector('button') as Element)
+
+    const rows = [...containerEl.querySelectorAll('[role="menuitemradio"]')]
+    const remoteRow = rows.find(row => row.querySelector(`.${css.branchName}`)?.textContent === 'origin/feature/new')
+    click(remoteRow as Element)
+    await settle()
+
+    const alert = document.body.querySelector('[role="alert"]')
+    expect(alert).not.toBeNull()
+    expect(alert?.textContent).toContain('origin/feature/new')
+    expect(alert?.textContent).toContain('already exists')
   })
 
   it('shows upstream tracking facts under each branch name (VSCode-style)', async () => {
@@ -252,6 +344,7 @@ describe('menu', () => {
           { name: 'local-only' },
           { name: 'main', upstream: 'origin/main', gone: true },
         ],
+        remoteOnly: [],
       },
     })
     const containerEl = render(props)
@@ -280,6 +373,7 @@ describe('menu', () => {
           { name: 'feature/one', upstream: 'origin/feature/one', ahead: 2, behind: 1 },
           { name: 'main', upstream: 'origin/main' },
         ],
+        remoteOnly: [],
       },
     })
     const containerEl = render(props)
@@ -303,7 +397,9 @@ describe('menu', () => {
 
     typeQuery(input, 'rel')
     rows = [...containerEl.querySelectorAll('[role="menuitemradio"]')]
-    expect(rows.map(names)).toEqual(['release/2.0'])
+    // The search spans both groups: `rel` matches the local release branch
+    // AND the remote-only release-candidate.
+    expect(rows.map(names)).toEqual(['release/2.0', 'origin/release-candidate'])
 
     typeQuery(input, 'zzz')
     expect(containerEl.querySelectorAll('[role="menuitemradio"]')).toHaveLength(0)

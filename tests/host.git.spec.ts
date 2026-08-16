@@ -13,7 +13,10 @@ import { describe, expect, it } from 'vitest'
 import {
   ExecGitRunner, GitUnavailableError, type GitCommandResult, type GitRunner,
 } from '../src/git.ts'
-import { parseBranchRows, parseSwitchRequest, statusOf, switchTo, createBranch, SwitchFailure } from '../src/index.ts'
+import {
+  parseBranchRows, parseSwitchRequest, statusOf, switchTo, createBranch, trackRemote,
+  remoteOnlyBranches, SwitchFailure,
+} from '../src/index.ts'
 
 const hasGit = spawnSync('git', ['--version'], { windowsHide: true }).status === 0
 
@@ -32,11 +35,23 @@ class FakeRunner implements GitRunner {
 const ok = (stdout: string, stderr = ''): GitCommandResult => ({ code: 0, stdout, stderr })
 const fail = (code: number, stderr: string): GitCommandResult => ({ code, stdout: '', stderr })
 
+/** A runner scripted for a repo with the given local / remote ref outputs. */
+function repoRunner(localRefs: string, remoteRefs = '', current = 'main\n'): GitRunner {
+  return new FakeRunner((args) => {
+    if (args[0] === '--version') return ok('git version 2.45.0')
+    if (args[0] === 'rev-parse') return ok('true\n')
+    if (args[0] === 'branch' && args[1] === '--show-current') return ok(current)
+    if (args[0] === 'for-each-ref' && args[1] === 'refs/heads') return ok(localRefs)
+    if (args[0] === 'for-each-ref' && args[1] === 'refs/remotes') return ok(remoteRefs)
+    return fail(1, 'unexpected')
+  })
+}
+
 describe('statusOf', () => {
   it('reports git unavailable when the runner raises GitUnavailableError', async () => {
     const runner = new FakeRunner(() => new GitUnavailableError('git executable not found'))
     const status = await statusOf(runner, 'D:\\repo')
-    expect(status).toEqual({ gitAvailable: false, repo: false, branch: null, branches: [] })
+    expect(status).toEqual({ gitAvailable: false, repo: false, branch: null, branches: [], remoteOnly: [] })
   })
 
   it('reports git unavailable when git --version exits non-zero', async () => {
@@ -52,19 +67,14 @@ describe('statusOf', () => {
       return fail(128, 'fatal: not a git repository')
     })
     const status = await statusOf(runner, 'D:\\plain')
-    expect(status).toEqual({ gitAvailable: true, repo: false, branch: null, branches: [] })
+    expect(status).toEqual({ gitAvailable: true, repo: false, branch: null, branches: [], remoteOnly: [] })
   })
 
   it('collects the current branch and the local branch list', async () => {
-    const runner = new FakeRunner((args) => {
-      if (args[0] === '--version') return ok('git version 2.45.0')
-      if (args[0] === 'rev-parse') return ok('true\n')
-      if (args[0] === 'branch' && args[1] === '--show-current') return ok('main\n')
-      if (args[0] === 'for-each-ref') {
-        return ok('feature/one\torigin/feature/one\t[ahead 2]\nmain\torigin/main\t\nlocal-only\t\t\n')
-      }
-      return fail(1, 'unexpected')
-    })
+    const runner = repoRunner(
+      'feature/one\torigin/feature/one\t[ahead 2]\nmain\torigin/main\t\nlocal-only\t\t\n',
+      'origin/feature/one\norigin/main\n',
+    )
     const status = await statusOf(runner, 'D:\\repo')
     expect(status).toEqual({
       gitAvailable: true,
@@ -75,7 +85,17 @@ describe('statusOf', () => {
         { name: 'main', upstream: 'origin/main' },
         { name: 'local-only' },
       ],
+      remoteOnly: [],
     })
+  })
+
+  it('lists remote branches that have no local counterpart, excluding origin/HEAD', async () => {
+    const runner = repoRunner(
+      'main\torigin/main\t\n',
+      'origin/HEAD\norigin/feature/new\norigin/main\n',
+    )
+    const status = await statusOf(runner, 'D:\\repo')
+    expect(status.remoteOnly).toEqual(['origin/feature/new'])
   })
 
   it('parses upstream tracking facts: ahead, behind, both, gone, in-sync', () => {
@@ -98,13 +118,19 @@ describe('statusOf', () => {
     ])
   })
 
+  it('computes remote-only branches by stripping the remote prefix', () => {
+    expect(remoteOnlyBranches(
+      'origin/HEAD\norigin/feature/x\norigin/main\nupstream/dev\n',
+      new Set(['main', 'dev']),
+    )).toEqual(['origin/feature/x'])
+  })
+
+  it('ignores bare remote refs without a branch component', () => {
+    expect(remoteOnlyBranches('origin\norigin/master\n', new Set(['master']))).toEqual([])
+  })
+
   it('reports a detached HEAD as branch null', async () => {
-    const runner = new FakeRunner((args) => {
-      if (args[0] === '--version') return ok('git version 2.45.0')
-      if (args[0] === 'rev-parse') return ok('true\n')
-      if (args[0] === 'branch' && args[1] === '--show-current') return ok('\n')
-      return ok('')
-    })
+    const runner = repoRunner('', '', '\n')
     const status = await statusOf(runner, 'D:\\repo')
     expect(status.gitAvailable).toBe(true)
     expect(status.repo).toBe(true)
@@ -196,6 +222,31 @@ describe('createBranch', () => {
   it('surfaces git-unavailable as a 500 failure', async () => {
     const runner = new FakeRunner(() => new GitUnavailableError('git executable not found'))
     await expect(createBranch(runner, { cwd: 'D:\\repo', branch: 'feature/new' }))
+      .rejects.toMatchObject({ name: 'SwitchFailure', code: 'git-unavailable', status: 500 })
+  })
+})
+
+describe('trackRemote', () => {
+  it('checks out a remote branch as a local tracking branch', async () => {
+    const seen: string[][] = []
+    const runner = new FakeRunner((args: readonly string[]) => {
+      seen.push([...args])
+      return ok('')
+    })
+    await expect(trackRemote(runner, { cwd: 'D:\\repo', branch: 'origin/feature/new' }))
+      .resolves.toEqual({ ok: true, branch: 'feature/new' })
+    expect(seen).toEqual([['switch', '--track', 'origin/feature/new']])
+  })
+
+  it('classifies failures as track-failed', async () => {
+    const runner = new FakeRunner(() => fail(128, "fatal: a branch named 'feature' already exists"))
+    await expect(trackRemote(runner, { cwd: 'D:\\repo', branch: 'origin/feature' }))
+      .rejects.toMatchObject({ name: 'SwitchFailure', code: 'track-failed', status: 409 })
+  })
+
+  it('surfaces git-unavailable as a 500 failure', async () => {
+    const runner = new FakeRunner(() => new GitUnavailableError('git executable not found'))
+    await expect(trackRemote(runner, { cwd: 'D:\\repo', branch: 'origin/feature' }))
       .rejects.toMatchObject({ name: 'SwitchFailure', code: 'git-unavailable', status: 500 })
   })
 })
@@ -366,9 +417,36 @@ describe.skipIf(!hasGit)('real git integration', () => {
       status = await statusOf(runner, dir)
       const local = status.branches.find(row => row.name === 'local-only')
       expect(local).toEqual({ name: 'local-only' })
+
+      // Remote-only branch: create `feature` on the remote, fetch, track it.
+      const featureTree = await run(['write-tree'])
+      const featureCommit = await runner.run(
+        ['commit-tree', featureTree.stdout.trim(), '-p', commit.stdout.trim(), '-m', 'feature work'],
+        remote,
+      )
+      expect(featureCommit.code).toBe(0)
+      expect((await runner.run(['update-ref', 'refs/heads/feature', featureCommit.stdout.trim()], remote)).code).toBe(0)
+      expect((await run(['fetch', 'origin'])).code).toBe(0)
+      status = await statusOf(runner, dir)
+      expect(status.remoteOnly).toContain('origin/feature')
+      expect(status.remoteOnly).not.toContain('origin/HEAD')
+
+      await expect(trackRemote(runner, { cwd: dir, branch: 'origin/feature' }))
+        .resolves.toEqual({ ok: true, branch: 'feature' })
+      status = await statusOf(runner, dir)
+      expect(status.branch).toBe('feature')
+      expect(status.branches.some(row =>
+        row.name === 'feature' && row.upstream === 'origin/feature')).toBe(true)
+      expect(status.remoteOnly).not.toContain('origin/feature')
+
+      // Tracking a branch that now exists locally fails.
+      const duplicate = await trackRemote(runner, { cwd: dir, branch: 'origin/feature' })
+        .catch((error: unknown) => error)
+      expect(duplicate).toBeInstanceOf(SwitchFailure)
+      expect((duplicate as SwitchFailure).code).toBe('track-failed')
     } finally {
       rmSync(dir, { recursive: true, force: true })
       rmSync(remote, { recursive: true, force: true })
     }
-  })
+  }, 30000)
 })

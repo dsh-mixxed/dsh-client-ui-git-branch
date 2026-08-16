@@ -1,6 +1,6 @@
 {
   "name": "dsh-client-ui-git-branch",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "Out-of-tree dsh plugin: a git branch selector in the chat composer, immediately left of the model seat (current branch, fuzzy search, 5-row scroll, switch with conflict toast).",
   "type": "module",
   "license": "MIT",

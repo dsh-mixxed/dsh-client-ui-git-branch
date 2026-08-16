@@ -29,6 +29,12 @@ export interface StatusResponse {
   readonly branch: string | null
   /** Local branches with upstream-tracking facts (git branch order). */
   readonly branches: readonly BranchRow[]
+  /**
+   * Remote branches with NO corresponding local branch (short names like
+   * `origin/feature`); `origin/HEAD` is excluded. Clicking one creates a
+   * local tracking branch via the track route.
+   */
+  readonly remoteOnly: readonly string[]
 }
 
 /** One branch-switch write sent to POST /plugin/ui-git-branch/switch. */

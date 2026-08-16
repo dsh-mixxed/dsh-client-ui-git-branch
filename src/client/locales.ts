@@ -11,6 +11,8 @@ const keys = [
   'create.button', 'create.title', 'create.description', 'create.placeholder',
   'create.confirm', 'create.cancel', 'create.error.invalid', 'create.failed',
   'branch.tracks', 'branch.gone', 'branch.ahead', 'branch.behind',
+  'group.local', 'group.remote',
+  'track.failed',
 ] as const
 
 export type GitBranchKey = typeof keys[number]
@@ -41,6 +43,9 @@ export const en: Record<GitBranchKey, string> = {
   'branch.gone': 'gone',
   'branch.ahead': '{count} ahead',
   'branch.behind': '{count} behind',
+  'group.local': 'Local branches',
+  'group.remote': 'Remote branches',
+  'track.failed': 'Could not check out remote branch “{branch}”: {message}',
 }
 
 export const zh: Record<GitBranchKey, string> = {
@@ -69,4 +74,7 @@ export const zh: Record<GitBranchKey, string> = {
   'branch.gone': '已删除',
   'branch.ahead': '领先 {count}',
   'branch.behind': '落后 {count}',
+  'group.local': '本地分支',
+  'group.remote': '远程分支',
+  'track.failed': '无法从远程分支创建本地分支“{branch}”：{message}',
 }

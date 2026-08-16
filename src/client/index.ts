@@ -42,7 +42,9 @@ export function normalizeStatus(body: StatusResponse): StatusResponse {
   const branches = (body.branches as readonly unknown[]).map(row =>
     typeof row === 'string' ? { name: row } : row as BranchRow,
   )
-  return { ...body, branches }
+  // An older node half does not serve remoteOnly; degrade to no remote group.
+  const remoteOnly = body.remoteOnly ?? []
+  return { ...body, branches, remoteOnly }
 }
 
 /** Load the git status of one workspace directory, rejecting on transport or HTTP errors. */
@@ -94,11 +96,28 @@ async function createBranch(cwd: string, branch: string): Promise<void> {
   }
 }
 
+/** Check out a remote branch as a new local tracking branch, rejecting with git's own message. */
+async function trackRemote(cwd: string, branch: string): Promise<void> {
+  const request: SwitchRequest = { cwd, branch }
+  const response = await fetch('/plugin/ui-git-branch/track', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', accept: 'application/json' },
+    body: JSON.stringify(request),
+  })
+  if (!response.ok) {
+    const body = await response.json().catch(() => null) as ErrorResponse | null
+    const message = body?.error !== undefined
+      ? body.error.message
+      : `track request failed with status ${response.status}`
+    throw new Error(message)
+  }
+}
+
 /** Contribute the git branch seat to the composer tool row. */
 export function apply(ctx: ClientContext): void {
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'ui-git-branch: dictionaries')
 
-  const injected = (): GitBranchInjected => ({ loadStatus, switchBranch, createBranch })
+  const injected = (): GitBranchInjected => ({ loadStatus, switchBranch, createBranch, trackRemote })
 
   ctx.slots.inject('conversation.input.right', () => ctx.slots.register({
     name: 'conversation.input.right',
