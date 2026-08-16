@@ -1,80 +1,83 @@
 # dsh-client-ui-git-branch
 
-A dsh (DeepSeek Harness) out-of-tree plugin: a **Git 分支选择器**（git branch selector）in the
-chat composer, immediately **left of the model seat** (`conversation.input.right`).
+English | [中文](README.zh.md)
 
-When the session's workspace is inside a git work tree (and `git` is on PATH), the composer tool
-row shows a branch chip next to the model select. Opening it reveals a fuzzy-search box above the
-branch list; at most 5 branches are visible at once and the rest are reached through the internal
-scrollbar. The current branch is highlighted in the brand-blue tone with a check mark. Picking
-another branch switches the work tree (`git switch`); if the switch is blocked — typically
-uncommitted changes that would be overwritten — a toast pops up with git's own error message.
+A dsh (DeepSeek Harness) out-of-tree plugin that adds a **git branch selector** to the chat
+composer, immediately **left of the model seat** (`conversation.input.right`).
 
 ## Features
 
-- Composer seat **left of the model selection**, same chip/menu chrome as the model seat.
-- Shows only when `git` is installed **and** the session workspace is a git repository.
-- Fuzzy branch search (substring or in-order subsequence), with a clear button.
-- List shows **at most 5 rows**; more branches scroll inside the list (no page-level scrolling).
-- **Current branch marked in a distinct color** (brand blue + check icon).
-- **Upstream tracking facts (VSCode-style)**: each branch shows its remote short name
+- Composer seat **left of the model selection**, same chip/menu chrome as the model seat
+- Shows only when `git` is installed **and** the session workspace is a git repository
+- Fuzzy branch search (substring or in-order subsequence), with a clear button
+- List shows **at most 5 rows**; more branches scroll inside the list (no page-level scrolling)
+- **Current branch marked in a distinct color** (brand blue + check icon)
+- **Upstream tracking facts (VSCode-style)**: every branch shows its remote short name
   (`origin/main`) with colored ahead/behind commit counts (`↑2` amber / `↓3` green) and a red
   `gone` marker when the upstream ref was deleted; local-only branches show nothing. The trigger
-  chip carries the same badge when the current branch is out of sync.
-- Branch switching with conflict detection: failures pop a transient toast carrying git's stderr.
-- **New branch action** at the bottom of the menu: a dialog asks for the branch name, then creates
-  the branch from HEAD and checks it out (`git switch -c`); invalid names are flagged live, and
-  collisions surface git's message inside the dialog.
-- **Local / Remote groups**: the list is split under `Local branches` and `Remote branches` headings.
-  The local group holds every local branch (tracked branches keep their upstream mapping);
-  the remote group shows only branches that exist remotely but have no local counterpart
-  (`origin/HEAD` excluded). The fuzzy search spans both groups, and clicking a remote branch
-  creates a local tracking branch and switches to it (`git switch --track`).
-- Full **zh / en i18n** and automatic **multi-theme** support through `--dsw-*` design tokens.
-- Detached-HEAD safe (trigger falls back to `HEAD`); unborn-HEAD repos still list the current branch.
+  chip carries the same badge when the current branch is out of sync
+- **Local / Remote groups** — see [Branch groups](#branch-groups)
+- **New branch action**: a dialog asks for the branch name, then creates the branch from HEAD and
+  checks it out (`git switch -c`); invalid names are flagged live, collisions surface git's message
+- Branch switching with conflict detection: failures pop a transient toast carrying git's stderr
+- Full **zh / en i18n** and automatic **multi-theme** support through `--dsw-*` design tokens
+- Detached-HEAD safe (trigger falls back to `HEAD`); unborn-HEAD repos still list the current branch
 
-## Architecture
+## Branch groups
 
-Dual-half package, no harness source changes:
+The list is split under two sticky headings:
 
-- **Node half** (`src/index.ts`, `src/git.ts`) — registers four HTTP routes on `ctx.webServer`:
-  - `GET /plugin/ui-git-branch/status?cwd=<workspace>` → git availability, repo membership,
-    current branch, the local branch list with upstream-tracking facts (one
-    `git for-each-ref` call: `%(upstream:short)` + `%(upstream:track)` → ahead/behind/gone),
-    and the remote-only branch short names (`refs/remotes` minus local counterparts and `*/HEAD`).
-  - `POST /plugin/ui-git-branch/switch` `{ cwd, branch }` → `git switch -- <branch>`;
-    non-zero exits return `409 { error: { code, message } }` with git's stderr.
-  - `POST /plugin/ui-git-branch/create` `{ cwd, branch }` → `git switch -c <branch>`
-    (create from HEAD and check out); an existing branch maps to `branch-exists`.
-  - `POST /plugin/ui-git-branch/track` `{ cwd, branch }` → `git switch --track <remote-branch>`
-    (remote-only checkout into a new local tracking branch).
-  - Git runs via `node:child_process` `execFile` (argv-only, no shell).
-- **Browser half** (`src/client/`) — registers a `conversation.input.right` entry
-  (`order: 100`, namespace `gitBranch`); reads the session workspace from the standard
-  `useSessions` kit and talks to the routes over same-origin fetch. A normalization layer folds
-  legacy `string[]` branches from a mid-upgrade host so the list never renders blank.
+- **Local branches** — every local branch. Tracked branches keep their upstream mapping
+  (`master → origin/master`, with ahead/behind counts).
+- **Remote branches** — only branches that exist remotely but have **no local counterpart**
+  (`origin/HEAD` symrefs and bare remote refs are excluded).
+
+Behavior:
+
+- The fuzzy **search spans both groups** at once; a group with no matches collapses away.
+- Clicking a **remote** branch creates a local tracking branch and switches to it
+  (`git switch --track origin/feature` → local `feature` tracking `origin/feature`); the branch
+  then moves into the local group.
+- Clicking a **local** branch switches the work tree (`git switch`); a blocked switch —
+  typically uncommitted changes that would be overwritten — pops a toast with git's own message.
 
 ## Install
 
+1. Build and pack the plugin:
+
+   ```sh
+   pnpm install
+   pnpm run typecheck
+   pnpm test
+   pnpm run build
+   npm pack          # dsh-client-ui-git-branch-0.4.0.tgz
+   ```
+
+2. Install the package into your profile:
+
+   ```sh
+   dsh plugin --profile web add ./dsh-client-ui-git-branch-0.4.0.tgz
+   ```
+
+3. Mount it in `$DSH_HOME/profiles/<name>/cordis.patch.yml`:
+
+   ```yaml
+   - insert:
+       - id: ui-git-branch              # plugin id (unchanged)
+         name: dsh-client-ui-git-branch # npm package name
+   ```
+
+4. Restart the profile and refresh the browser page. In a session whose workspace is a git
+   repository, the branch chip appears left of the model seat.
+
+## Verify
+
 ```sh
-# 1) Build and pack (requires pnpm)
-pnpm install
-pnpm run typecheck && pnpm test && pnpm run build
-npm pack                                   # → dsh-client-ui-git-branch-0.1.0.tgz
-
-# 2) Install into a profile (e.g. your web profile)
-dsh plugin --profile web add ./dsh-client-ui-git-branch-0.1.0.tgz
-
-# 3) Mount the plugin in the profile's own patch layer
-#    $DSH_HOME/profiles/<name>/cordis.patch.yml:
-#    - insert:
-#        - id: ui-git-branch
-#          name: dsh-client-ui-git-branch
+dsh --profile <name> --dump-config | Select-String ui-git-branch
 ```
 
-Plugin-set changes (new rows) need a profile restart for the client to discover the package —
-although a running instance may hot-mount through patch-file HMR (the host routes and boot graph
-pick up the new row without restart; the browser picks it up on the next page load / refresh).
+After the restart, the composer shows the branch chip; opening it reveals the grouped list, the
+search box, and the New branch action.
 
 ## Development
 
