@@ -23,6 +23,7 @@ import {
   IconPlusOutline16, IconSearchOutline16, IconWarningOutline16, Input, Modal, Toast,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
+import { isValidBranchName } from '../refname.ts'
 import type { BranchRow, StatusResponse } from '../wire.ts'
 import css from './GitBranchSelect.module.css'
 
@@ -65,20 +66,12 @@ export function fuzzyMatch(query: string, branch: string): boolean {
 /**
  * Practical subset of `git check-ref-format`: a branch name must be non-empty,
  * short enough, and free of the characters and component shapes git refuses.
+ * Shares the authoritative rule set with the host half (../refname.ts) so the
+ * UI rejects exactly what the API would reject. Re-exported for the spec.
  * @param name - the raw input value.
  * @returns whether the name may be submitted.
  */
-export function isValidBranchName(name: string): boolean {
-  const value = name.trim()
-  if (value === '' || value.length > 255) return false
-  if (/[ ~^:?*[\\]/.test(value)) return false
-  if (value.includes('..') || value.includes('@{') || value.includes('//')) return false
-  if (value.startsWith('-') || value.startsWith('.') || value.endsWith('.') || value.endsWith('/')) {
-    return false
-  }
-  if (value.includes('/.')) return false
-  return true
-}
+export { isValidBranchName }
 
 /**
  * One branch row's full accessible title: name, upstream, and tracking facts.

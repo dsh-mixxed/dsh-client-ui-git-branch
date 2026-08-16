@@ -5,20 +5,49 @@
  * is not on PATH).
  */
 
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
+import { accessSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
+import type { IncomingMessage } from 'node:http'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { spawnSync } from 'node:child_process'
+import { delimiter, join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   ExecGitRunner, GitUnavailableError, type GitCommandResult, type GitRunner,
 } from '../src/git.ts'
 import {
   parseBranchRows, parseSwitchRequest, statusOf, switchTo, createBranch, trackRemote,
-  remoteOnlyBranches, SwitchFailure,
+  remoteOnlyBranches, SwitchFailure, isSameOrigin,
 } from '../src/index.ts'
 
-const hasGit = spawnSync('git', ['--version'], { windowsHide: true }).status === 0
+/**
+ * Locate a `git` executable on PATH without spawning anything: walk PATH in
+ * order and try each PATHEXT extension, mirroring how the OS resolves a bare
+ * command name. Keeps the test file free of node:child_process (the shipped
+ * plugin's only process boundary is the host half's execFile runner).
+ */
+function findGit(): string | undefined {
+  const extensions = (process.env.PATHEXT ?? (process.platform === 'win32' ? '.COM;.EXE;.BAT;.CMD' : ''))
+    .split(';')
+    .map(ext => ext.toLowerCase())
+    .filter(ext => ext !== '')
+  const pathDirs = (process.env.PATH ?? '')
+    .split(delimiter)
+    .map(dir => dir.trim().replace(/^"(.*)"$/, '$1'))
+    .filter(dir => dir !== '')
+  for (const dir of pathDirs) {
+    for (const extension of extensions.length > 0 ? extensions : ['']) {
+      try {
+        const candidate = join(dir, `git${extension}`)
+        accessSync(candidate)
+        return candidate
+      } catch {
+        // Not here; keep walking.
+      }
+    }
+  }
+  return undefined
+}
+
+const hasGit = findGit() !== undefined
 
 /** Scripted runner: maps an argv array to a result or a thrown error. */
 class FakeRunner implements GitRunner {
@@ -268,6 +297,51 @@ describe('parseSwitchRequest', () => {
   it('rejects missing or newline-bearing branch names', () => {
     expect(() => parseSwitchRequest({ cwd: 'D:\\repo', branch: '' })).toThrow(/branch/)
     expect(() => parseSwitchRequest({ cwd: 'D:\\repo', branch: 'a\nb' })).toThrow(/newlines/)
+  })
+
+  it('rejects names git would refuse or could parse as options', () => {
+    const invalid = [
+      '-x', '--orphan=evil', '-leading',          // option-shaped (check-ref-format --branch)
+      'HEAD',                                      // reserved, case-sensitive
+      'a..b', 'a@{b', 'foo.lock', 'a/b.lock', 'foo.lock/bar', 'x.lock/',  // shape rules
+      'a b', 'a\tb', 'a~b', 'a^b', 'a:b', 'a?b', 'a*b', 'a[b', 'a\\b',     // forbidden chars
+      '.hidden', 'a/.hidden', 'foo.', 'foo/', '/foo', 'a//b',              // component rules
+    ]
+    for (const branch of invalid) {
+      expect(() => parseSwitchRequest({ cwd: 'D:\\repo', branch }), branch).toThrow(/valid git ref name/)
+    }
+  })
+
+  it('accepts names git accepts, including unicode and dotted versions', () => {
+    const valid = ['main', 'feature/one', 'v1.0.1', '中文分支', '@foo', 'head', 'HeAd', 'foo.lockx']
+    for (const branch of valid) {
+      expect(parseSwitchRequest({ cwd: 'D:\\repo', branch }).branch).toBe(branch)
+    }
+  })
+})
+
+describe('isSameOrigin', () => {
+  const request = (headers: Record<string, string | undefined>): IncomingMessage =>
+    ({ headers }) as unknown as IncomingMessage
+
+  it('allows non-browser clients without an Origin header', () => {
+    expect(isSameOrigin(request({ host: 'localhost:3080' }))).toBe(true)
+    expect(isSameOrigin(request({}))).toBe(true)
+  })
+
+  it('allows a same-origin browser request', () => {
+    expect(isSameOrigin(request({ origin: 'http://localhost:3080', host: 'localhost:3080' }))).toBe(true)
+    expect(isSameOrigin(request({ origin: 'https://dsh.example.com', host: 'dsh.example.com' }))).toBe(true)
+  })
+
+  it('rejects cross-origin requests (CSRF)', () => {
+    expect(isSameOrigin(request({ origin: 'https://evil.example', host: 'localhost:3080' }))).toBe(false)
+    expect(isSameOrigin(request({ origin: 'http://localhost:5173', host: 'localhost:3080' }))).toBe(false)
+    expect(isSameOrigin(request({ origin: 'null', host: 'localhost:3080' }))).toBe(false)
+  })
+
+  it('rejects an Origin with no Host header', () => {
+    expect(isSameOrigin(request({ origin: 'http://localhost:3080' }))).toBe(false)
   })
 })
 

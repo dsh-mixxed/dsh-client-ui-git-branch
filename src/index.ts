@@ -6,8 +6,16 @@
  * talks to these routes over same-origin fetch.
  *
  * Every route reads live state at request time — nothing is cached. Git runs
- * through an injected {@link GitRunner} (production: execFile); a missing git
- * executable is a legitimate state (the UI hides), not an error.
+ * through an injected {@link GitRunner} (production: execFile with argv arrays
+ * only, no shell); a missing git executable is a legitimate state (the UI
+ * hides), not an error.
+ *
+ * Security posture: write inputs are validated at this boundary — branch
+ * names against `git check-ref-format --branch` rules (refname.ts) so user
+ * input can never be parsed by git as an option, and every route is guarded
+ * by a same-origin check (browsers send an Origin header on cross-origin
+ * requests; a foreign page must not be able to drive git in local
+ * directories).
  *
  * @module ui-git-branch
  */
@@ -17,6 +25,7 @@ import type { Context } from '@deepseek-ai/cordis'
 // Type-only: pulls the ctx.webServer Context merge.
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import { ExecGitRunner, GitUnavailableError, type GitRunner } from './git.ts'
+import { isValidBranchName } from './refname.ts'
 import type { BranchRow, CreateResponse, ErrorResponse, StatusResponse, SwitchRequest, SwitchResponse } from './wire.ts'
 
 export const name = 'ui-git-branch'
@@ -70,7 +79,13 @@ function readJsonBody(req: IncomingMessage): Promise<unknown> {
   })
 }
 
-/** Narrow an unknown value to a branch switch write, throwing on malformed fields. */
+/**
+ * Narrow an unknown value to a branch switch write, throwing on malformed
+ * fields. Branch names must satisfy `git check-ref-format --branch` (see
+ * refname.ts): anything git would refuse — or that git could parse as an
+ * option, like a leading `-` — is rejected here with a 400 before it ever
+ * reaches the git process.
+ */
 export function parseSwitchRequest(body: unknown): SwitchRequest {
   const value = body as Partial<SwitchRequest> | null
   if (typeof value !== 'object' || value === null) throw new Error('switch request must be an object')
@@ -80,6 +95,7 @@ export function parseSwitchRequest(body: unknown): SwitchRequest {
     throw new Error('switch request requires a branch name')
   }
   if (/[\r\n]/.test(branch)) throw new Error('branch name must not contain newlines')
+  if (!isValidBranchName(branch)) throw new Error('branch name is not a valid git ref name')
   return { cwd, branch: branch.trim() }
 }
 
@@ -277,6 +293,27 @@ export async function trackRemote(runner: GitRunner, request: SwitchRequest): Pr
   throw new SwitchFailure('track-failed', message !== '' ? message : `git switch --track exited with code ${result.code}`, 409)
 }
 
+/**
+ * Same-origin guard for the plugin routes (CSRF hardening). Browsers attach
+ * an `Origin` header to cross-origin requests; the dsh web UI fetches these
+ * routes same-origin, so any Origin that does not match the request's own
+ * `Host` is a foreign page trying to drive git in local directories and is
+ * refused with 403. Non-browser clients (no Origin header) pass.
+ * @param req - the incoming request.
+ * @returns whether the request may be served.
+ */
+export function isSameOrigin(req: IncomingMessage): boolean {
+  const origin = req.headers.origin
+  if (origin === undefined) return true
+  const host = req.headers.host
+  if (host === undefined) return false
+  try {
+    return new URL(origin).host.toLowerCase() === host.toLowerCase()
+  } catch {
+    return false
+  }
+}
+
 /** Plugin body: register the two routes and answer them. */
 export function apply(ctx: Context): void {
   const runner = new ExecGitRunner()
@@ -337,6 +374,10 @@ export function apply(ctx: Context): void {
     kind: 'prefix',
     path: API_PREFIX,
     handler: async (req, res) => {
+      if (!isSameOrigin(req)) {
+        sendJson(res, 403, errorBody('forbidden', 'cross-origin request rejected'))
+        return
+      }
       const pathname = new URL(req.url ?? '/', 'http://x').pathname
       if (pathname === `${API_PREFIX}/status` && req.method === 'GET') {
         await handleStatus(req, res)

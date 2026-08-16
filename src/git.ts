@@ -1,8 +1,13 @@
 /**
  * Git command runner for the plugin's host half. The runner is an injected
- * seam: unit tests script fake results; the production implementation shells
- * out to `git` via node:child_process (the host process runs it directly —
- * argv arrays only, no shell, so branch names can never inject options).
+ * seam: unit tests script fake results; the production implementation spawns
+ * `git` via node:child_process (the host process runs it directly).
+ *
+ * Invocation is argv arrays only with `shell: false` — no shell, no string
+ * interpolation, so branch names can never become shell commands — and branch
+ * names are additionally validated against `git check-ref-format --branch`
+ * at the HTTP boundary (refname.ts), so they can never be parsed by git as
+ * options either.
  */
 
 import { execFile } from 'node:child_process'
@@ -47,7 +52,15 @@ export class ExecGitRunner implements GitRunner {
       execFile(
         'git',
         [...args],
-        { cwd, windowsHide: true, timeout: this.timeoutMs, maxBuffer: this.maxBuffer },
+        {
+          cwd,
+          // Explicit: argv arrays only, never a shell — no metacharacter or
+          // option string can reach a shell from here.
+          shell: false,
+          windowsHide: true,
+          timeout: this.timeoutMs,
+          maxBuffer: this.maxBuffer,
+        },
         (error, stdout, stderr) => {
           if (error === null) {
             resolve({ code: 0, stdout, stderr })
