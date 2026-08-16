@@ -20,8 +20,10 @@
 
 1. **不改 deepseek-harness 任何基础代码**：不修改 `packages/` 任何文件，不新增 RPC 进 host 的
    `rpc-map`，不改 bundle。
-2. 插件以独立 npm 包存在，通过 dsh 官方支持的 out-of-tree 挂载路径安装（`dsh plugin add` +
-   profile 自己的 `cordis.patch.yml` insert）。
+2. 插件以独立 npm 包存在（scoped 包 `@dsh-mixxed/dsh-client-ui-git-branch`），通过 dsh 官方支持
+   的 out-of-tree 挂载路径安装：包内自带 `cordis.patch.yml` 并声明 `dsh.bundle.patch`，
+   `dsh plugin add` 自动把包追加进 profile 的 `dsh.profile.bundles` 层栈（无需手改
+   `cordis.patch.yml`）。
 
 ## 3. 可行性结论（全部在真实源码核实）
 
@@ -107,25 +109,27 @@ ErrorResponse  { error: { code: string; message: string } }
 
 ```sh
 # 1) 构建 + 打包
-pnpm run typecheck && pnpm test && pnpm run build && npm pack        # → dsh-client-ui-git-branch-0.1.0.tgz
+pnpm run typecheck && pnpm test && pnpm run build && npm pack        # → dsh-mixxed-dsh-client-ui-git-branch-<version>.tgz
 
-# 2) 装进独立测试 profile（不碰用户 web profile）
-dsh plugin --profile git-branch-dev add ./dsh-client-ui-git-branch-0.1.0.tgz
+# 2) 装进独立测试 profile（不碰用户 web profile）——包声明 dsh.bundle.patch（包内
+#    cordis.patch.yml），dsh plugin add 的 reconcile 步骤自动把包追加进 profile 的
+#    dsh.profile.bundles，下次启动自动挂载——无需手改 cordis.patch.yml（该文件是用户层，
+#    CLI 永不自动改写，这是设计使然）
+dsh plugin --profile git-branch-dev add ./dsh-mixxed-dsh-client-ui-git-branch-<version>.tgz
 
-# 3) 在 $DSH_HOME/profiles/git-branch-dev/cordis.patch.yml（用户自有文件）insert 一行：
-#    - insert:
-#        - id: ui-git-branch
-#          name: dsh-client-ui-git-branch    # loader 条目名 = 可解析包名 = client-modules 图行 id
+# 3) 验证：--dump-config 出现 ui-git-branch 行（含 # == @dsh-mixxed/... 层注释），且
+#    profile package.json 的 dsh.profile.bundles 含该包
+dsh --profile git-branch-dev --dump-config | Select-String ui-git-branch
 ```
 
 要点：
 
-- 包名 `dsh-client-ui-git-branch`（npm 名）与 cordis 插件 id `ui-git-branch`（`src/index.ts` 的
-  `name` 导出）分离：loader 条目 `name` 取 npm 名，`client-modules` 的图行 id、`/plugins/<id>/client.js`
-  路由、bundle 内 `__ModuleLoader__.load({ id })` 三者一致（`modules/src/index.ts` L384-401 +
-  `system.ts` L99-111 的注册校验）。
+- scoped 包名 `@dsh-mixxed/dsh-client-ui-git-branch`（npm 名）与 cordis 插件 id `ui-git-branch`
+  （`src/index.ts` 的 `name` 导出）分离：loader 条目 `name` 取 scoped npm 名，`client-modules`
+  的图行 id、`/plugins/<id>/client.js` 路由、bundle 内 `__ModuleLoader__.load({ id })` 三者一致
+  （`modules/src/index.ts` L384-401 + `system.ts` L99-111 的注册校验）。
 - 插件集变更需重启 profile 才被客户端 `pkgMeta` 缓存发现；以 boot manifest 能否 serve
-  `/plugins/dsh-client-ui-git-branch/client.js` 为准验证。
+  `/plugins/@dsh-mixxed/dsh-client-ui-git-branch/client.js` 为准验证。
 - 测试用独立 profile + 独立端口（用户 web 实例占 3080 → 测试用 3800）；重新验证前清残留实例。
 
 ## 6. 被否决的方案（记录）
@@ -154,9 +158,10 @@ dsh plugin --profile git-branch-dev add ./dsh-client-ui-git-branch-0.1.0.tgz
 
 ```
 dsh-client-ui-git-branch/
-├── package.json                 # name/exports{".","./client"}/dsh.client{platform:"web"}/files
+├── package.json                 # name/exports{".","./client"}/dsh.client{platform:"web"}/dsh.bundle/files
 ├── tsconfig.json                # 严格配置（对齐参考插件）
 ├── vitest.config.ts             # node + jsdom 双环境；inline ui-primitives
+├── cordis.patch.yml             # bundle 补丁：id 挂载行（随包发布，dsh.bundle.patch 指向）
 ├── scripts/build.mjs            # esbuild 双产物（node ESM + client CJS 闭包工厂）
 ├── src/
 │   ├── index.ts                 # node half: webServer 路由（status / switch）
@@ -179,7 +184,7 @@ dsh-client-ui-git-branch/
 |---|---|
 | host 逻辑 | 单元测试：fake GitRunner 脚本化响应（git 缺失/非仓库/仓库/分离 HEAD/切换冲突）；真实 git 集成：临时目录 `git init` 建分支后断言 status/switch 全链路 |
 | client 组件 | jsdom：无 cwd 隐藏、非仓库隐藏、触发器文案、菜单开合、模糊搜索过滤、>5 分支滚动容器、当前分支高亮类、点击切换调用、失败 Toast 文案 |
-| 组装验证 | 安装进 `git-branch-dev` profile → `--dump-config` 见行 → 3800 端口启动 → boot manifest serve `/plugins/dsh-client-ui-git-branch/client.js` → API 用 curl 验证真实 git 数据（在 git 仓库目录上）→ 页面打开会话（工作区为 git 仓库）见触发器与菜单 |
+| 组装验证 | 安装进 `git-branch-dev` profile（`dsh plugin add` 自动挂载 bundle）→ `--dump-config` 见行 → 3800 端口启动 → boot manifest serve `/plugins/@dsh-mixxed/dsh-client-ui-git-branch/client.js` → API 用 curl 验证真实 git 数据（在 git 仓库目录上）→ 页面打开会话（工作区为 git 仓库）见触发器与菜单 |
 
 ## 10. 风险清单
 

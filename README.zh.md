@@ -5,6 +5,34 @@
 一个 dsh（DeepSeek Harness）out-of-tree 插件：在对话输入栏中、**模型选择的正左侧**
 （`conversation.input.right`）添加一个 **git 分支选择器**。
 
+## 安装
+
+1. 从 npm 安装插件（已发布为 `@dsh-mixxed/dsh-client-ui-git-branch`）：
+
+   ```sh
+   dsh plugin --profile web add @dsh-mixxed/dsh-client-ui-git-branch
+   ```
+
+   包声明了 `dsh.bundle`（包内自带 `cordis.patch.yml`），因此 `dsh plugin add` 会自动把它追加进
+   profile 的 `dsh.profile.bundles` 层栈，下次启动自动挂载——**无需手动编辑 cordis.patch.yml**。
+
+   从旧版本（未声明 bundle）升级：请删除 `$DSH_HOME/profiles/<name>/cordis.patch.yml` 中旧的
+   `ui-git-branch` 挂载行——bundle 层现在会提供它，两者并存会挂载两次。
+
+2. **重启 profile**（新增插件的发现需要重启）并刷新浏览器页面。打开工作区为 git 仓库的会话，
+   模型选择左侧即出现分支 chip。
+
+### 源码构建（开发 / 离线）
+
+```sh
+pnpm install
+pnpm run typecheck
+pnpm test
+pnpm run build
+npm pack          # 生成 dsh-mixxed-dsh-client-ui-git-branch-<version>.tgz
+dsh plugin --profile web add ./dsh-mixxed-dsh-client-ui-git-branch-<version>.tgz
+```
+
 ## 功能特性
 
 - 座位位于**模型选择左侧**，chip 与菜单外观与模型选择完全一致
@@ -39,40 +67,15 @@
 - 点击**本地**分支：切换工作树（`git switch`）；切换被阻止（通常是未提交改动会被覆盖）
   时弹出 Toast 显示 git 原始报错。
 
-## 安装
-
-1. 构建并打包插件：
-
-   ```sh
-   pnpm install
-   pnpm run typecheck
-   pnpm test
-   pnpm run build
-   npm pack          # dsh-client-ui-git-branch-0.4.0.tgz
-   ```
-
-2. 将包装入你的 profile：
-
-   ```sh
-   dsh plugin --profile web add ./dsh-client-ui-git-branch-0.4.0.tgz
-   ```
-
-3. 在 `$DSH_HOME/profiles/<name>/cordis.patch.yml` 中挂载：
-
-   ```yaml
-   - insert:
-       - id: ui-git-branch              # 插件 id（保持不变）
-         name: dsh-client-ui-git-branch # npm 包名
-   ```
-
-4. 重启 profile 并刷新浏览器页面。打开工作区为 git 仓库的会话，模型选择左侧即出现分支
-   chip。
-
 ## 验证
 
 ```sh
 dsh --profile <name> --dump-config | Select-String ui-git-branch
 ```
+
+组合后的配置包含 `ui-git-branch` 行，且 `$DSH_HOME/profiles/<name>/package.json` 的
+`dsh.profile.bundles` 中列出了 `@dsh-mixxed/dsh-client-ui-git-branch`（由 `dsh plugin add`
+自动追加）。
 
 重启后，输入栏显示分支 chip；展开可见分组列表、搜索框与「新建分支」入口。
 

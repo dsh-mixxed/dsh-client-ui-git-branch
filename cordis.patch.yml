@@ -1,0 +1,12 @@
+# The ui-git-branch bundle patch: mounts the git branch selector row (the
+# composer seat immediately left of the model select). Declared through
+# `dsh.bundle.patch` in package.json, so
+# `dsh plugin --profile <name> add @dsh-mixxed/dsh-client-ui-git-branch`
+# automatically appends this package to the profile's `dsh.profile.bundles`
+# layer stack and the row mounts on the next boot — no manual
+# cordis.patch.yml edit needed. `id` is the cordis plugin id (ui-git-branch);
+# `name` is the package specifier the loader resolves (the npm package name,
+# quoted because '@' is a reserved YAML indicator).
+- insert:
+    - id: ui-git-branch
+      name: "@dsh-mixxed/dsh-client-ui-git-branch"

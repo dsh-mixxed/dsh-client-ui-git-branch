@@ -5,6 +5,36 @@ English | [中文](README.zh.md)
 A dsh (DeepSeek Harness) out-of-tree plugin that adds a **git branch selector** to the chat
 composer, immediately **left of the model seat** (`conversation.input.right`).
 
+## Install
+
+1. Install the plugin from npm (published as `@dsh-mixxed/dsh-client-ui-git-branch`):
+
+   ```sh
+   dsh plugin --profile web add @dsh-mixxed/dsh-client-ui-git-branch
+   ```
+
+   The package declares `dsh.bundle` (its bundled `cordis.patch.yml`), so `dsh plugin add`
+   automatically appends it to the profile's `dsh.profile.bundles` layer stack and the plugin
+   mounts on the next boot — **no manual `cordis.patch.yml` editing**.
+
+   Upgrading an install that predates the bundle declaration: remove the legacy `ui-git-branch`
+   row from `$DSH_HOME/profiles/<name>/cordis.patch.yml` — the bundle layer now supplies it, and
+   leaving both would mount the id twice.
+
+2. Restart the profile (new plugins are discovered at boot) and refresh the browser page. In a
+   session whose workspace is a git repository, the branch chip appears left of the model seat.
+
+### Building from source (development / offline)
+
+```sh
+pnpm install
+pnpm run typecheck
+pnpm test
+pnpm run build
+npm pack          # produces dsh-mixxed-dsh-client-ui-git-branch-<version>.tgz
+dsh plugin --profile web add ./dsh-mixxed-dsh-client-ui-git-branch-<version>.tgz
+```
+
 ## Features
 
 - Composer seat **left of the model selection**, same chip/menu chrome as the model seat
@@ -41,40 +71,15 @@ Behavior:
 - Clicking a **local** branch switches the work tree (`git switch`); a blocked switch —
   typically uncommitted changes that would be overwritten — pops a toast with git's own message.
 
-## Install
-
-1. Build and pack the plugin:
-
-   ```sh
-   pnpm install
-   pnpm run typecheck
-   pnpm test
-   pnpm run build
-   npm pack          # dsh-client-ui-git-branch-0.4.0.tgz
-   ```
-
-2. Install the package into your profile:
-
-   ```sh
-   dsh plugin --profile web add ./dsh-client-ui-git-branch-0.4.0.tgz
-   ```
-
-3. Mount it in `$DSH_HOME/profiles/<name>/cordis.patch.yml`:
-
-   ```yaml
-   - insert:
-       - id: ui-git-branch              # plugin id (unchanged)
-         name: dsh-client-ui-git-branch # npm package name
-   ```
-
-4. Restart the profile and refresh the browser page. In a session whose workspace is a git
-   repository, the branch chip appears left of the model seat.
-
 ## Verify
 
 ```sh
 dsh --profile <name> --dump-config | Select-String ui-git-branch
 ```
+
+The composed config shows the `ui-git-branch` row, and
+`$DSH_HOME/profiles/<name>/package.json` lists `@dsh-mixxed/dsh-client-ui-git-branch` under
+`dsh.profile.bundles` (auto-appended by `dsh plugin add`).
 
 After the restart, the composer shows the branch chip; opening it reveals the grouped list, the
 search box, and the New branch action.
