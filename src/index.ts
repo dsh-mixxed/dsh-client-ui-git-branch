@@ -17,7 +17,7 @@ import type { Context } from '@deepseek-ai/cordis'
 // Type-only: pulls the ctx.webServer Context merge.
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import { ExecGitRunner, GitUnavailableError, type GitRunner } from './git.ts'
-import type { CreateResponse, ErrorResponse, StatusResponse, SwitchRequest, SwitchResponse } from './wire.ts'
+import type { BranchRow, CreateResponse, ErrorResponse, StatusResponse, SwitchRequest, SwitchResponse } from './wire.ts'
 
 export const name = 'ui-git-branch'
 
@@ -113,17 +113,49 @@ export async function statusOf(runner: GitRunner, cwd: string): Promise<StatusRe
   const branch = await runner.run(['branch', '--show-current'], cwd)
   const currentBranch = branch.code === 0 && branch.stdout.trim() !== '' ? branch.stdout.trim() : null
 
-  const branches = await runner.run(['branch', '--format=%(refname:short)'], cwd)
-  const list = branches.code === 0
-    ? branches.stdout.split('\n').map(line => line.trim()).filter(line => line !== '')
-    : []
+  // One call gets every local branch plus its upstream-tracking facts:
+  // `name\tupstream\t[ahead N, behind M]` — upstream empty for local-only
+  // branches, track empty when in sync, `[gone]` when the upstream ref is gone.
+  const refs = await runner.run([
+    'for-each-ref', 'refs/heads',
+    '--format=%(refname:short)%09%(upstream:short)%09%(upstream:track)',
+  ], cwd)
+  const list = refs.code === 0 ? parseBranchRows(refs.stdout) : []
   // Unborn HEAD (a repo with no commits yet): git lists no refs, but the
   // current branch name is still a valid choice — surface it.
-  if (list.length === 0 && currentBranch !== null && !list.includes(currentBranch)) {
-    list.push(currentBranch)
+  if (list.length === 0 && currentBranch !== null && !list.some(row => row.name === currentBranch)) {
+    list.push({ name: currentBranch })
   }
 
   return { gitAvailable: true, repo: true, branch: currentBranch, branches: list }
+}
+
+/** Parse `for-each-ref` output lines into branch rows with upstream facts. */
+export function parseBranchRows(stdout: string): BranchRow[] {
+  const rows: BranchRow[] = []
+  for (const line of stdout.split('\n')) {
+    const [name, upstream, track] = line.split('\t')
+    const trimmed = name?.trim()
+    if (trimmed === undefined || trimmed === '') continue
+    const remote = upstream?.trim()
+    if (remote === undefined || remote === '') {
+      rows.push({ name: trimmed })
+      continue
+    }
+    if (track !== undefined && track.includes('gone')) {
+      rows.push({ name: trimmed, upstream: remote, gone: true })
+      continue
+    }
+    const ahead = /ahead (\d+)/.exec(track ?? '')
+    const behind = /behind (\d+)/.exec(track ?? '')
+    rows.push({
+      name: trimmed,
+      upstream: remote,
+      ...(ahead !== null ? { ahead: Number(ahead[1]) } : {}),
+      ...(behind !== null ? { behind: Number(behind[1]) } : {}),
+    })
+  }
+  return rows
 }
 
 /**

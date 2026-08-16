@@ -17,6 +17,10 @@ uncommitted changes that would be overwritten — a toast pops up with git's own
 - Fuzzy branch search (substring or in-order subsequence), with a clear button.
 - List shows **at most 5 rows**; more branches scroll inside the list (no page-level scrolling).
 - **Current branch marked in a distinct color** (brand blue + check icon).
+- **Upstream tracking facts (VSCode-style)**: each branch shows its remote short name
+  (`origin/main`) with colored ahead/behind commit counts (`↑2` amber / `↓3` green) and a red
+  `gone` marker when the upstream ref was deleted; local-only branches show nothing. The trigger
+  chip carries the same badge when the current branch is out of sync.
 - Branch switching with conflict detection: failures pop a transient toast carrying git's stderr.
 - **New branch action** at the bottom of the menu: a dialog asks for the branch name, then creates
   the branch from HEAD and checks it out (`git switch -c`); invalid names are flagged live, and
@@ -30,7 +34,8 @@ Dual-half package, no harness source changes:
 
 - **Node half** (`src/index.ts`, `src/git.ts`) — registers three HTTP routes on `ctx.webServer`:
   - `GET /plugin/ui-git-branch/status?cwd=<workspace>` → git availability, repo membership,
-    current branch, local branch list.
+    current branch, and the local branch list with upstream-tracking facts (one
+    `git for-each-ref` call: `%(upstream:short)` + `%(upstream:track)` → ahead/behind/gone).
   - `POST /plugin/ui-git-branch/switch` `{ cwd, branch }` → `git switch -- <branch>`;
     non-zero exits return `409 { error: { code, message } }` with git's stderr.
   - `POST /plugin/ui-git-branch/create` `{ cwd, branch }` → `git switch -c <branch>`

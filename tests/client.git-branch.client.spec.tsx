@@ -19,7 +19,11 @@ const REPO: StatusResponse = {
   gitAvailable: true,
   repo: true,
   branch: 'main',
-  branches: ['feature/one', 'main', 'release/2.0'],
+  branches: [
+    { name: 'feature/one', upstream: 'origin/feature/one', ahead: 2 },
+    { name: 'main', upstream: 'origin/main' },
+    { name: 'release/2.0', upstream: 'origin/release/2.0', behind: 3 },
+  ],
 }
 
 const NOT_A_REPO: StatusResponse = { gitAvailable: true, repo: false, branch: null, branches: [] }
@@ -29,7 +33,10 @@ const MANY_BRANCHES: StatusResponse = {
   gitAvailable: true,
   repo: true,
   branch: 'main',
-  branches: ['b1', 'b2', 'b3', 'b4', 'b5', 'b6', 'b7'],
+  branches: [
+    { name: 'b1' }, { name: 'b2' }, { name: 'b3' }, { name: 'b4' }, { name: 'b5' },
+    { name: 'b6' }, { name: 'b7' },
+  ],
 }
 
 /** Minimal translate: dictionary lookup + {param} interpolation. */
@@ -178,11 +185,85 @@ describe('menu', () => {
     expect(search?.getAttribute('placeholder')).toBe(en['search.placeholder'])
 
     const rows = [...containerEl.querySelectorAll('[role="menuitemradio"]')]
-    expect(rows.map(row => row.textContent)).toEqual(['feature/one', 'main', 'release/2.0'])
-    const currentRow = rows.find(row => row.textContent === 'main')
+    const names = (row: Element) => row.querySelector(`.${css.branchName}`)?.textContent
+    expect(rows.map(names)).toEqual(['feature/one', 'main', 'release/2.0'])
+    const currentRow = rows.find(row => names(row) === 'main')
     expect(currentRow?.classList.contains(css.current)).toBe(true)
     expect(currentRow?.getAttribute('aria-checked')).toBe('true')
     expect(rows.filter(row => row.getAttribute('aria-checked') === 'true')).toHaveLength(1)
+  })
+
+  it('shows upstream tracking facts under each branch name (VSCode-style)', async () => {
+    const { props } = makeProps({ cwd: 'D:\\repo' })
+    const containerEl = render(props)
+    await settle()
+    click(containerEl.querySelector('button') as Element)
+
+    const rows = [...containerEl.querySelectorAll('[role="menuitemradio"]')]
+    const detailOf = (row: Element) => row.querySelector(`.${css.detail}`)
+    const feature = rows[0] as Element
+    expect(detailOf(feature)?.textContent).toContain('origin/feature/one')
+    expect(detailOf(feature)?.textContent).toContain('↑2')
+    expect(feature.querySelector(`.${css.ahead}`)).not.toBeNull()
+
+    const release = rows[2] as Element
+    expect(detailOf(release)?.textContent).toContain('origin/release/2.0')
+    expect(detailOf(release)?.textContent).toContain('↓3')
+    expect(release.querySelector(`.${css.behind}`)).not.toBeNull()
+
+    // In-sync branches render the upstream only, with no counts.
+    const main = rows[1] as Element
+    expect(detailOf(main)?.textContent).toContain('origin/main')
+    expect(main.querySelector(`.${css.ahead}`)).toBeNull()
+    expect(main.querySelector(`.${css.behind}`)).toBeNull()
+  })
+
+  it('marks a deleted upstream as gone and omits details for local-only branches', async () => {
+    const { props } = makeProps({
+      cwd: 'D:\\repo',
+      status: {
+        gitAvailable: true,
+        repo: true,
+        branch: 'main',
+        branches: [
+          { name: 'local-only' },
+          { name: 'main', upstream: 'origin/main', gone: true },
+        ],
+      },
+    })
+    const containerEl = render(props)
+    await settle()
+    click(containerEl.querySelector('button') as Element)
+
+    const rows = [...containerEl.querySelectorAll('[role="menuitemradio"]')]
+    const main = rows.find(row => row.querySelector(`.${css.branchName}`)?.textContent === 'main') as Element
+    const gone = main.querySelector(`.${css.gone}`)
+    expect(gone).not.toBeNull()
+    expect(gone?.textContent).toContain(en['branch.gone'])
+    expect(main.querySelector(`.${css.ahead}`)).toBeNull()
+
+    const local = rows.find(row => row.querySelector(`.${css.branchName}`)?.textContent === 'local-only') as Element
+    expect(local.querySelector(`.${css.detail}`)).toBeNull()
+  })
+
+  it('shows the tracking badge on the trigger when the current branch is out of sync', async () => {
+    const { props } = makeProps({
+      cwd: 'D:\\repo',
+      status: {
+        gitAvailable: true,
+        repo: true,
+        branch: 'feature/one',
+        branches: [
+          { name: 'feature/one', upstream: 'origin/feature/one', ahead: 2, behind: 1 },
+          { name: 'main', upstream: 'origin/main' },
+        ],
+      },
+    })
+    const containerEl = render(props)
+    await settle()
+    const trigger = containerEl.querySelector('button') as Element
+    expect(trigger.textContent).toContain('↑2')
+    expect(trigger.textContent).toContain('↓1')
   })
 
   it('filters branches with the fuzzy search', async () => {
@@ -194,11 +275,12 @@ describe('menu', () => {
     const input = containerEl.querySelector('input[type="text"]') as HTMLInputElement
     typeQuery(input, 'feo') // subsequence of feature/one
     let rows = [...containerEl.querySelectorAll('[role="menuitemradio"]')]
-    expect(rows.map(row => row.textContent)).toEqual(['feature/one'])
+    let names = (row: Element) => row.querySelector(`.${css.branchName}`)?.textContent
+    expect(rows.map(names)).toEqual(['feature/one'])
 
     typeQuery(input, 'rel')
     rows = [...containerEl.querySelectorAll('[role="menuitemradio"]')]
-    expect(rows.map(row => row.textContent)).toEqual(['release/2.0'])
+    expect(rows.map(names)).toEqual(['release/2.0'])
 
     typeQuery(input, 'zzz')
     expect(containerEl.querySelectorAll('[role="menuitemradio"]')).toHaveLength(0)
@@ -225,7 +307,7 @@ describe('menu', () => {
     click(containerEl.querySelector('button') as Element)
 
     const rows = [...containerEl.querySelectorAll('[role="menuitemradio"]')]
-    const feature = rows.find(row => row.textContent === 'feature/one')
+    const feature = rows.find(row => row.querySelector(`.${css.branchName}`)?.textContent === 'feature/one')
     expect(feature).not.toBeUndefined()
     click(feature as Element)
     expect(switchBranch).toHaveBeenCalledWith('D:\\repo', 'feature/one')
@@ -243,7 +325,7 @@ describe('menu', () => {
     click(containerEl.querySelector('button') as Element)
 
     const rows = [...containerEl.querySelectorAll('[role="menuitemradio"]')]
-    click(rows.find(row => row.textContent === 'release/2.0') as Element)
+    click(rows.find(row => row.querySelector(`.${css.branchName}`)?.textContent === 'release/2.0') as Element)
     await settle()
 
     const alert = document.body.querySelector('[role="alert"]')

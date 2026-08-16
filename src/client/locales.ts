@@ -10,6 +10,7 @@ const keys = [
   'switch.failed',
   'create.button', 'create.title', 'create.description', 'create.placeholder',
   'create.confirm', 'create.cancel', 'create.error.invalid', 'create.failed',
+  'branch.tracks', 'branch.gone', 'branch.ahead', 'branch.behind',
 ] as const
 
 export type GitBranchKey = typeof keys[number]
@@ -36,6 +37,10 @@ export const en: Record<GitBranchKey, string> = {
   'create.cancel': 'Cancel',
   'create.error.invalid': 'Invalid branch name.',
   'create.failed': 'Could not create branch “{branch}”: {message}',
+  'branch.tracks': 'Tracks {upstream}',
+  'branch.gone': 'gone',
+  'branch.ahead': '{count} ahead',
+  'branch.behind': '{count} behind',
 }
 
 export const zh: Record<GitBranchKey, string> = {
@@ -60,4 +65,8 @@ export const zh: Record<GitBranchKey, string> = {
   'create.cancel': '取消',
   'create.error.invalid': '分支名称无效。',
   'create.failed': '无法创建分支“{branch}”：{message}',
+  'branch.tracks': '跟踪 {upstream}',
+  'branch.gone': '已删除',
+  'branch.ahead': '领先 {count}',
+  'branch.behind': '落后 {count}',
 }

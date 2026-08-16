@@ -52,6 +52,26 @@
   white-space: nowrap;
 }
 
+/* VSCode-status-bar style tracking badge on the trigger: unpushed/unpulled
+   commit counts in the warn/success tones, shown only when non-zero. */
+.triggerTrack {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  font-size: 12px;
+  line-height: 20px;
+  font-weight: 500;
+}
+
+.triggerAhead {
+  color: var(--dsw-alias-state-warn-label);
+}
+
+.triggerBehind {
+  color: var(--dsw-alias-state-success-primary);
+}
+
 .chevron {
   flex: 0 0 auto;
   color: var(--dsw-alias-label-caption);
@@ -223,6 +243,42 @@
   font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Upstream-tracking line under the branch name (VSCode-style): the remote
+   short name in the tertiary tone, with colored ahead/behind counts and a
+   red gone marker for a deleted upstream. */
+.detail {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.upstream {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.ahead {
+  flex: 0 0 auto;
+  color: var(--dsw-alias-state-warn-label);
+}
+
+.behind {
+  flex: 0 0 auto;
+  color: var(--dsw-alias-state-success-primary);
+}
+
+.gone {
+  flex: 0 0 auto;
+  color: var(--dsw-alias-state-error-primary);
+  font-weight: 500;
 }
 
 /* The current branch is marked with a distinct color: the brand-blue business

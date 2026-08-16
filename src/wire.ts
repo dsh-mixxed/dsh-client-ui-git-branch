@@ -5,6 +5,20 @@
  * into a bundle.
  */
 
+/** One local branch with its upstream-tracking facts, as the browser renders it. */
+export interface BranchRow {
+  /** Local branch name. */
+  readonly name: string
+  /** Upstream tracking branch short name (`origin/main`); absent = local-only. */
+  readonly upstream?: string
+  /** Commits this branch is ahead of its upstream (unpushed). */
+  readonly ahead?: number
+  /** Commits this branch is behind its upstream (unpulled). */
+  readonly behind?: number
+  /** True when the configured upstream ref no longer exists (git `[gone]`). */
+  readonly gone?: boolean
+}
+
 /** The git state of one session workspace, as the browser renders it. */
 export interface StatusResponse {
   /** Whether a `git` executable is available on PATH. */
@@ -13,8 +27,8 @@ export interface StatusResponse {
   readonly repo: boolean
   /** The current branch name; null on a detached HEAD. */
   readonly branch: string | null
-  /** Local branch names (`git branch --format=%(refname:short)` order). */
-  readonly branches: readonly string[]
+  /** Local branches with upstream-tracking facts (git branch order). */
+  readonly branches: readonly BranchRow[]
 }
 
 /** One branch-switch write sent to POST /plugin/ui-git-branch/switch. */

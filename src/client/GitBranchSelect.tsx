@@ -23,7 +23,7 @@ import {
   IconPlusOutline16, IconSearchOutline16, IconWarningOutline16, Input, Modal, Toast,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
-import type { StatusResponse } from '../wire.ts'
+import type { BranchRow, StatusResponse } from '../wire.ts'
 import css from './GitBranchSelect.module.css'
 
 /** Injected business face: same-origin calls to the host half's routes. */
@@ -76,6 +76,26 @@ export function isValidBranchName(name: string): boolean {
   }
   if (value.includes('/.')) return false
   return true
+}
+
+/**
+ * One branch row's full accessible title: name, upstream, and tracking facts.
+ * @param row - the branch row.
+ * @param t - the namespace translate seat.
+ * @returns the joined title string.
+ */
+function branchTitle(row: BranchRow, t: GitBranchSelectProps['t']): string {
+  const parts: string[] = [row.name]
+  if (row.upstream !== undefined) {
+    parts.push(t('branch.tracks', { upstream: row.upstream }))
+    if (row.gone === true) {
+      parts.push(t('branch.gone'))
+    } else {
+      if ((row.ahead ?? 0) > 0) parts.push(t('branch.ahead', { count: row.ahead ?? 0 }))
+      if ((row.behind ?? 0) > 0) parts.push(t('branch.behind', { count: row.behind ?? 0 }))
+    }
+  }
+  return parts.join(' · ')
 }
 
 /** Render the composer git branch seat. */
@@ -162,7 +182,7 @@ export function GitBranchSelect(
 
   const branches = data === null ? [] : data.branches
   const filtered = useMemo(
-    () => branches.filter(branch => fuzzyMatch(query, branch)),
+    () => branches.filter(row => fuzzyMatch(query, row.name)),
     [branches, query],
   )
 
@@ -172,6 +192,12 @@ export function GitBranchSelect(
   const current = data.branch
   const detached = current === null
   const triggerLabel = detached ? t('trigger.fallback') : current
+  const currentRow = current === null ? undefined : branches.find(row => row.name === current)
+  // VSCode-status-bar style tracking badge on the trigger: only when the
+  // current branch has unpushed / unpulled commits (in sync shows nothing).
+  const triggerTrack = currentRow !== undefined && (currentRow.ahead !== undefined || currentRow.behind !== undefined)
+    ? { ahead: currentRow.ahead ?? 0, behind: currentRow.behind ?? 0 }
+    : null
 
   const show = (): void => {
     setOpen(true)
@@ -280,7 +306,7 @@ export function GitBranchSelect(
         aria-haspopup="menu"
         aria-expanded={open}
         aria-controls={open ? `${id}-menu` : undefined}
-        title={detached ? `${triggerLabel} · ${t('detached')}` : triggerLabel}
+        title={detached ? `${triggerLabel} · ${t('detached')}` : currentRow !== undefined ? branchTitle(currentRow, t) : triggerLabel}
         onClick={() => {
           if (open) close()
           else show()
@@ -288,6 +314,12 @@ export function GitBranchSelect(
       >
         <IconBranchOutline16 className={css.triggerIcon} />
         <span className={css.triggerBranch}>{triggerLabel}</span>
+        {triggerTrack !== null && (
+          <span className={css.triggerTrack}>
+            {triggerTrack.ahead > 0 && <span className={css.triggerAhead}>↑{triggerTrack.ahead}</span>}
+            {triggerTrack.behind > 0 && <span className={css.triggerBehind}>↓{triggerTrack.behind}</span>}
+          </span>
+        )}
         <IconChevronDownOutline14 className={clsx(css.chevron, open && css.chevronOpen)} />
       </button>
 
@@ -335,8 +367,8 @@ export function GitBranchSelect(
             </div>
           )}
           <div className={clsx(css.list, 'scrollable')}>
-            {filtered.map(branch => {
-              const selected = branch === current
+            {filtered.map(row => {
+              const selected = row.name === current
               return (
                 <button
                   ref={itemRef()}
@@ -344,13 +376,26 @@ export function GitBranchSelect(
                   role="menuitemradio"
                   aria-checked={selected}
                   className={clsx(css.option, selected && css.current)}
-                  key={branch}
-                  title={branch}
+                  key={row.name}
+                  title={branchTitle(row, t)}
                   disabled={busy}
-                  onClick={() => { choose(branch) }}
+                  onClick={() => { choose(row.name) }}
                 >
                   <span className={css.optionCopy}>
-                    <span className={css.branchName}>{branch}</span>
+                    <span className={css.branchName}>{row.name}</span>
+                    {row.upstream !== undefined && (
+                      <span className={css.detail}>
+                        <span className={css.upstream}>{row.upstream}</span>
+                        {row.gone === true
+                          ? <span className={css.gone}>{t('branch.gone')}</span>
+                          : (
+                            <>
+                              {(row.ahead ?? 0) > 0 && <span className={css.ahead}>↑{row.ahead}</span>}
+                              {(row.behind ?? 0) > 0 && <span className={css.behind}>↓{row.behind}</span>}
+                            </>
+                          )}
+                      </span>
+                    )}
                   </span>
                   <span className={css.check}>
                     {selected ? <IconCheckOutline16 /> : null}
